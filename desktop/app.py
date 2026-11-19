@@ -14,7 +14,7 @@ except ImportError:
     from editor import Editor
 
 STYLE="""
-QWidget#app{background:#101819;color:#f7f2e7;}
+QWidget#app,QDialog{background:#101819;color:#f7f2e7;}
 QFrame#card{background:#182427;border:1px solid #304347;border-radius:15px;}
 QLabel{color:#f7f2e7;font-size:14px;}
 QLabel[kind="title"]{font-size:36px;font-weight:700;}
@@ -28,8 +28,8 @@ QPushButton:disabled{color:#81928f;background:#222d2f;border-color:#314246;}
 QPushButton[kind="primary"]{background:#a9e8c4;color:#10241b;border-color:#a9e8c4;font-weight:700;}
 QPushButton[kind="primary"]:hover{background:#c7f4d9;}
 QPushButton[kind="primary"]:disabled{background:#2c5142;color:#8fa89f;border-color:#2c5142;}
-QLineEdit,QComboBox,QSpinBox,QTextEdit{color:#f6f1e5;background:#101b1d;border:1px solid #3a5054;border-radius:7px;padding:7px 10px;selection-background-color:#4a9277;}
-QLineEdit:focus,QComboBox:focus,QSpinBox:focus,QTextEdit:focus{border-color:#9ee8c0;}
+QLineEdit,QComboBox,QSpinBox,QDoubleSpinBox,QTextEdit,QListWidget{color:#f6f1e5;background:#101b1d;border:1px solid #3a5054;border-radius:7px;padding:7px 10px;selection-background-color:#4a9277;}
+QLineEdit:focus,QComboBox:focus,QSpinBox:focus,QDoubleSpinBox:focus,QTextEdit:focus{border-color:#9ee8c0;}
 QComboBox QAbstractItemView{background:#182729;color:#f6f1e5;selection-background-color:#326655;}
 QCheckBox{color:#dae7de;spacing:8px;}
 QProgressBar{background:#101b1d;border:1px solid #384f53;border-radius:4px;height:8px;}
@@ -285,7 +285,7 @@ class Window(QWidget):
 def main():
     arg=argparse.ArgumentParser();arg.add_argument('--snapshot');opt=arg.parse_args()
     if opt.snapshot:os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
-    app=QApplication([sys.argv[0]])
+    app=QApplication([sys.argv[0]]);app.setStyle("Fusion")
     font_root=Path(os.environ.get('WINDIR','C:/Windows'))/'Fonts'
     family='Microsoft YaHei UI'
     if opt.snapshot:
