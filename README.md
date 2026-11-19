@@ -1,5 +1,13 @@
 # 4 元玩具红绿灯 → AI 任务指示灯
 
+## Windows 统一版下载
+
+- [3.0.0 Windows x64 ZIP 便携版（不需要 Python）](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/download/v3.0.0/AI-Lamp-3.0.0-win-x64.zip)
+- [Release 说明、校验文件](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/tag/v3.0.0) · [统一版源码、局域网搜索和使用说明](desktop-unified/README.md)
+
+统一版支持 Nano 和 C3，保留托盘、自启、自动跟随与 C3 分段播报。AT 默认隐藏；Nano 接线页已取消。可搜索附近 Wi-Fi 和局域网灯板。下载后完整解压，双击文件夹内的 `AI-Lamp.exe`。
+
+
 这是视频里 **ESP32-C3 + MAX98357A + 单只 1609 铝膜喇叭** 的固件源码，以及后续重做的 AI 指示灯桌面客户端。原玩具的外壳、灯和顶部按键保留；改造前由纽扣电池供电，没有 USB 口，改造后才从 C3 的 USB 供电。
 
 - 红灯快闪＝报错；黄灯呼吸＝运行中；绿灯常亮＝空闲。
@@ -44,7 +52,7 @@ PCM STATUS
 
 AI 状态有约 15 秒续期窗口，需要持续显示时由主机定期重发状态；单纯试灯用 `LIGHT RED`、`LIGHT YELLOW`、`LIGHT GREEN` 或 `LIGHT OFF`。语音需事先灌入 **16 kHz、16-bit signed little-endian、单声道原始 PCM（不带 WAV 文件头）**。1 号是完成播报，顶部按键默认从 2～4 号的已配置范围随机选；只存 2 号时，通过串口发 `SOUND COUNT 1`。可以用状态指令确认功放已初始化，不需要安装旧工作台。Wi‑Fi 在没有写入网络配置时不加入网络，建议入门先走 USB；局域网控制无认证，不要映射到公网。
 
-## 新版桌面端（Windows）
+## 旧版 C3 专用桌面端（保留源码）
 
 需要 Python 3.10+；建议 Python 3.12。安装依赖后，从仓库根目录启动：
 

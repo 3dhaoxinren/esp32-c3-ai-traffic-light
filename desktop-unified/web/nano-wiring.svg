@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+<title id="title">经典 5V Nano 与 HLK-M30 接线</title><desc id="desc">D10 接模块 TX，D11 经10k串联和20k对地分压接模块 RX。模块用独立3.3V供电并共地。ES/DF 保留10k上拉。</desc>
+<rect width="1200" height="520" rx="16" fill="#f8fbf9"/>
+<g font-family="Segoe UI,Microsoft YaHei,sans-serif" fill="#193c32">
+<text x="34" y="42" font-size="22" font-weight="700">Nano ↔ HLK-M30</text><text x="34" y="68" font-size="15" fill="#627871">逻辑接线图 · 模块脚号沿用已确认的小板定义，不代表焊盘的物理排列</text>
+<rect x="40" y="137" width="260" height="255" rx="15" fill="#fff" stroke="#b6cec2" stroke-width="2"/>
+<rect x="40" y="137" width="260" height="54" rx="15" fill="#e4f1ea"/>
+<text x="61" y="172" font-size="21" font-weight="700">Arduino Nano · 5V</text>
+<text x="62" y="221" font-size="17">D10 · 软件 RX</text><text x="62" y="286" font-size="17">D11 · 软件 TX</text><text x="62" y="366" font-size="17">GND</text>
+<text x="56" y="418" font-size="14" fill="#627871">USB 接电脑；D0 / D1 不接小板</text>
+<rect x="813" y="137" width="260" height="255" rx="15" fill="#fff" stroke="#b6cec2" stroke-width="2"/>
+<rect x="813" y="137" width="260" height="54" rx="15" fill="#e4f1ea"/>
+<text x="834" y="172" font-size="21" font-weight="700">HLK-M30 · 3.3V</text>
+<text x="834" y="221" font-size="17">5 脚 TX →</text><text x="834" y="286" font-size="17">4 脚 RX ←</text><text x="834" y="366" font-size="17">2 脚 GND</text>
+<text x="939" y="319" font-size="15">1 脚 VCC</text><text x="939" y="344" font-size="15">7 脚 ES/DF</text>
+<g fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+<path d="M300 215 H813" stroke="#2687a3"/><path d="M440 208 l-12 7 12 7" stroke="#2687a3"/>
+<path d="M300 280 H417 M497 280 H813 M610 280 V329 M610 379 V457" stroke="#237e65"/>
+<path d="M750 273 l12 7 -12 7" stroke="#237e65"/>
+<path d="M300 360 H338 V457 H1115 M813 360 H775 V457" stroke="#72847b"/>
+<path d="M800 108 H1103 V312 H1073 M1147 108 H1103 M1147 108 V257 M1147 307 V337 H1073" stroke="#cc8143"/>
+</g>
+<rect x="417" y="268" width="80" height="24" rx="3" fill="#fff" stroke="#237e65" stroke-width="2"/><text x="439" y="285" font-size="14">10kΩ</text>
+<rect x="598" y="329" width="24" height="50" rx="3" fill="#fff" stroke="#237e65" stroke-width="2"/><text x="637" y="359" font-size="15">20kΩ</text><text x="475" y="408" font-size="13" fill="#627871">20k 可用两只 10k 串联</text>
+<circle cx="610" cy="280" r="5" fill="#237e65"/><circle cx="610" cy="457" r="5" fill="#72847b"/>
+<text x="369" y="248" font-size="14" fill="#237e65">5V 信号</text><text x="626" y="266" font-size="14" fill="#237e65">约 3.3V</text>
+<text x="474" y="202" font-size="14" fill="#2687a3">3.3V TX 可直连 Nano RX</text>
+<rect x="559" y="84" width="242" height="48" rx="8" fill="#fff4e7" stroke="#dfb084"/><text x="576" y="105" font-size="15" font-weight="700">独立稳压 3.3V 电源</text><text x="576" y="123" font-size="12">建议 ≥500mA；电源负极接下方 GND</text>
+<rect x="1135" y="257" width="24" height="50" rx="3" fill="#fff" stroke="#cc8143" stroke-width="2"/><text x="1093" y="242" font-size="13" fill="#98661b">10k 上拉</text>
+<text x="833" y="418" font-size="13" fill="#627871">RST 和其余脚保持原接法</text>
+<text x="352" y="483" font-size="15" font-weight="600">共同 GND：Nano、电源负极、小板第 2 脚</text>
+<text x="34" y="509" font-size="13" fill="#98661b">先在工作台把模块改为 9600；接 Nano 前断开 CH340 的 TX/RX。模块不能接 5V。</text>
+</g></svg>

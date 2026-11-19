@@ -1,0 +1,24 @@
+:root{color-scheme:dark;--bg:#101819;--paper:#182427;--ink:#f7f2e7;--muted:#b4c6c0;--line:#365054;--green:#a9e8c4;--green-dark:#c2f4d5;--soft:#223a34;--red:#ffa09d;--amber:#f4cc80}
+.app{max-width:1440px}.header{min-height:74px}.brand-icon{background:#20433a;color:#a9e8c4}.primary{color:#11241a}.header .brand strong{font-size:23px}
+.telemetry,.status-panel,dialog,.ai-summary,.ai-connection,.tabs,.tab.active,.light-readout,.secondary{background:#213337;color:var(--ink)}
+input,select,textarea{font:inherit;background:#111d1f;color:var(--ink);border:1px solid #476167;border-radius:8px;padding:9px 12px}
+.log-row,.metric+.metric{border-color:var(--line)}.notice,.error,.demo,.network-note{background:#332c22;color:#ffe0a2}
+.badge,.quiet-badge,.ai-session-state,.version-tag{background:#274037;color:#b3e9cd}.diagram-link{background:#263b3c}
+#tab-audio .aud-section{border-top:1px solid var(--line);padding:14px 0 18px;margin:12px 0}
+#tab-audio textarea,#aud-player{width:100%;margin-bottom:9px}.aud-choose{cursor:pointer;margin:0;padding:8px 12px}
+.aud-grid{display:grid;gap:9px 14px;grid-template-columns:repeat(4,minmax(0,1fr))}.aud-grid label{margin:8px 0 9px}.aud-two{grid-template-columns:1fr 1fr}
+#aud-wave{display:block;width:100%;height:138px;background:#101b1d;border-radius:9px;cursor:crosshair;touch-action:none}
+#aud-cuts{padding-left:24px;max-height:185px;overflow:auto}#aud-cuts li{padding:.4em;border-bottom:1px solid var(--line)}
+#aud-cuts button{margin-left:10px;padding:4px 10px}#aud-bindings{margin-top:7px}#aud-result{margin-bottom:0;font-size:14px}
+@media(max-width:720px){.aud-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+body[data-view=audio] .overview,body[data-view=audio] .workspace>aside,
+body[data-view=ai] .overview,body[data-view=ai] .workspace>aside{display:none}
+body[data-view=audio] .workspace,body[data-view=ai] .workspace{grid-template-columns:1fr;padding-top:19px;max-width:1160px;margin:auto}
+.aud-header{display:flex;gap:12px;align-items:center}.aud-header button{padding:7px 10px}
+
+body:not(.at-advanced) .overview,body:not(.at-advanced) .workspace>aside,
+body:not(.at-advanced) [data-tab=wifi],body:not(.at-advanced) [data-tab=firmware]{display:none}
+body:not(.at-advanced) .workspace{grid-template-columns:minmax(0,1fr);max-width:1160px;margin:19px auto 0}
+.discover-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:9px 0}
+.discover-actions select{width:min(340px,100%)}.discover-actions .hint{margin:0}

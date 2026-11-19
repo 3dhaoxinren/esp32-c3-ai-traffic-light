@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 指示灯 · 统一版</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/unified.css"><script src="/session.js" defer></script><script src="/app.js" defer></script><script src="/audio.js" defer></script><script src="/discovery.js" defer></script></head>
+<body><div class="app">
+<header class="header"><div class="brand"><span class="brand-icon">AI</span><div><strong>AI指示灯 <span class="version-tag">3.0.0</span></strong><span>Nano / ESP32-C3 统一版</span></div></div><div class="header-actions"><span class="local-label"><i></i>本机运行</span><button class="ghost" id="advanced-at-toggle" aria-expanded="false">高级 AT</button><button class="ghost" id="exit">退出程序</button></div></header>
+<div id="demo-banner" class="demo" hidden>演示模式 · 下面的状态是模拟数据，不访问小板。</div>
+<main>
+<section class="overview"><div class="overview-heading"><div><div class="eyebrow">DEVICE OVERVIEW</div><h1>小板状态</h1></div><div class="refresh-actions"><span id="updated-at">尚未读取设备</span><label class="toggle"><input id="auto-refresh" type="checkbox" autocomplete="off">自动检查（15 秒）</label><button id="refresh-status" class="secondary" disabled>刷新状态</button></div></div>
+<div class="telemetry">
+<article class="metric"><span class="metric-label"><i class="dot" id="device-dot"></i>设备通信</span><strong id="live-device">尚未连接</strong><small id="live-port">选择左侧串口开始</small></article>
+<article class="metric"><span class="metric-label">运行模式</span><strong id="live-mode">待检测</strong><small id="live-firmware">固件能力未读取</small></article>
+<article class="metric"><span class="metric-label">Wi-Fi 状态</span><strong id="live-wifi">未确认</strong><small id="live-ssid">名称未读取</small></article>
+<article class="metric"><span class="metric-label">模块 IP 参数</span><strong class="mono" id="live-ip">—</strong><small>设备返回值，不等于联网证明</small></article>
+</div><div class="identity-line"><span id="device-label">等待 HLK-M30 版本回复</span><span id="live-mac">MAC —</span><span id="live-seen">无最新响应</span></div></section>
+<div class="workspace"><aside>
+<section class="panel connection"><div class="section-head"><h2>模块 AT 配置</h2><span id="mode-badge" class="badge">未连接</span></div>
+<label for="transport">连接方式</label><select id="transport"><option value="serial">USB 串口 · CH340</option><option value="udp">局域网 · UDP AT</option></select>
+<div id="serial-fields"><div class="label-row"><label for="port">串口</label><button id="refresh" class="text-button">重新扫描</button></div><select id="port"><option value="">正在查找串口…</option></select><label for="baud">电脑端波特率</label><select id="baud"><option>115200</option><option>57600</option><option>38400</option><option>19200</option><option>9600</option></select><p class="hint">8N1 · 无流控 · 自动添加回车 CR</p></div>
+<div id="udp-fields" hidden><label for="host">小板 IP 地址</label><input id="host" placeholder="例如 192.168.1.100" inputmode="decimal" autocomplete="off"><p class="hint">电脑与小板需在同一局域网。UDP 988，默认前缀 hlkAT。</p><p class="network-note">无线配置采用明文传输，更改密码建议使用 USB 串口。</p></div>
+<button class="primary full" id="connect">连接并读取状态</button><button class="secondary full" id="disconnect" disabled>释放串口 / 断开连接</button>
+<div class="connection-note"><span class="mini-heading">连接小提示</span><p id="connection-help">这块小板已安装上电 AT 固件。正常供电后连接即可，ES/DF 保持上拉。</p><button class="text-button" id="detect" disabled>重新检测 AT</button><details><summary>连接没有回复</summary><p>检查模块 3.3V 供电、共地、TX/RX 交叉接线和波特率，关闭其他占用串口的软件。</p><p>进入透传后可断电重启恢复这版固件的默认 AT。只有旧固件才需要按其说明操作 ES/DF。</p></details></div></section>
+</aside>
+<div class="main-column"><nav class="tabs" aria-label="工作区"><button class="tab active" data-tab="wifi" aria-selected="true">Wi-Fi 配置</button><button class="tab" data-tab="lights" aria-selected="false">灯控调试</button><button class="tab" data-tab="ai" aria-selected="false">AI指示灯</button><button class="tab" data-tab="audio" aria-selected="false">C3 音频</button><button class="tab" data-tab="firmware" aria-selected="false">固件升级</button></nav>
+<section id="tab-wifi" class="tab-panel panel wifi-panel"><div class="section-head"><div><h2>连接你的 Wi-Fi</h2><p class="section-subtitle">填写目标网络，AI指示灯负责发送指令和重启。</p></div><span class="quiet-badge">2.4 GHz</span></div><div class="notice" id="wifi-notice" hidden></div>
+<form id="wifi-form" autocomplete="off"><label for="ssid">Wi-Fi 名称 <span id="ssid-count" class="field-meta">0 / 32 字节</span></label><input id="ssid" placeholder="输入或搜索附近的 Wi-Fi" maxlength="32" spellcheck="false" required><div class="discover-actions"><button type="button" class="secondary" id="discover-at-wifi">搜索附近 Wi-Fi</button><select id="discover-at-choices" aria-label="附近 Wi-Fi" hidden></select><span id="discover-at-hint" class="hint" role="status"></span></div><label for="password">Wi-Fi 密码 <span id="password-count" class="field-meta">8–63 位</span></label><div class="password-field"><input id="password" type="password" autocomplete="new-password" maxlength="63" spellcheck="false" required><button type="button" class="ghost" id="show-password" aria-pressed="false">显示</button></div>
+<div class="wifi-bottom"><div><label for="auth">加密方式</label><select id="auth"><option value="9">WPA / WPA2-PSK</option><option value="7">WPA2-PSK</option></select></div><p class="privacy-note">密码不保存到文件<br>通信记录自动隐藏密码</p></div><p class="hint">支持英文、数字和半角符号；不支持 5 GHz 或 WPA3-only 网络。</p><div class="form-actions"><button id="configure" type="submit" class="primary" disabled>保存 Wi-Fi 并重启</button><button id="read" type="button" class="secondary" disabled>读取当前参数</button></div></form>
+<details class="config-details"><summary>模块返回的当前参数 <span>与上面的待写入表单分开显示</span></summary><div id="config-block" hidden><dl id="config-values"></dl><button id="use-ssid" class="text-button" hidden>填入已读取的 Wi-Fi 名称</button></div><button id="audit" class="text-button" disabled>查询远程 AT 设置</button></details><details class="config-details"><summary>旧 M30 透传工具</summary><p id="socket-summary">连接模块后显示透传参数。</p><div class="form-actions"><button id="nano-baud" class="secondary" disabled>模块设为 9600</button><button id="transparent" class="secondary" disabled>进入透传（TS=1）</button></div></details></section>
+<section id="tab-lights" class="tab-panel panel" hidden>
+<div class="section-head"><div><h2>红黄绿灯 · 快捷调试</h2><p class="section-subtitle">兼容 Nano 和 ESP32-C3。先选择一种连接方式。</p></div><span id="light-badge" class="badge">未连接</span></div>
+<p class="hint">在这里连接后可控制灯色或开启 AI 跟随。支持 USB 和已配好的局域网。</p>
+<div class="light-fields"><div><label for="light-transport">调试连接</label><select id="light-transport"><option value="serial">C3 / Nano USB · 115200</option><option value="tcp">Wi-Fi · TCP 客户端</option></select></div>
+<div id="light-usb-fields"><div class="label-row"><label for="light-port">Nano / C3 串口</label><button id="light-refresh" class="text-button">扫描</button></div><select id="light-port"><option value="">正在查找串口…</option></select></div>
+<div id="light-tcp-fields" hidden><label for="light-host">模块 IP 与端口</label><div class="light-address"><input id="light-host" placeholder="填写灯板局域网 IP" aria-label="模块 IP" spellcheck="false"><input id="light-tcp-port" type="number" min="1" max="65535" value="8080" aria-label="TCP 端口"></div></div></div>
+<div class="discover-actions"><button class="secondary" id="discover-lan">搜索局域网灯板</button><select id="discover-lan-choices" aria-label="发现的灯板" hidden></select><span id="discover-lan-hint" class="hint" role="status"></span></div>
+<p id="light-connect-hint" class="hint">同一页可连接 Nano 或 ESP32-C3；都可以使用 USB 或已配好的 Wi-Fi TCP。选择本机实际串口，不固定 COM3/COM18。初次打开 USB 可能让 Nano 重启。</p>
+<div class="form-actions"><button id="light-connect" class="primary">连接灯控</button><button id="light-disconnect" class="secondary" disabled>断开灯控</button></div>
+<p id="light-c3-audio" hidden class="hint">已识别 MAX98357A 固件。<button id="light-open-audio" class="secondary">打开 C3 音频</button></p>
+<div class="light-controls" aria-label="灯光控制"><button data-light-command="RED" class="light-key light-red" disabled><i></i>红灯</button><button data-light-command="YELLOW" class="light-key light-yellow" disabled><i></i>黄灯</button><button data-light-command="GREEN" class="light-key light-green" disabled><i></i>绿灯</button><button data-light-command="AUTO" class="secondary" disabled>自动循环</button><button data-light-command="OFF" class="secondary" disabled>全灭 / 停止</button><button data-light-command="STATUS" class="secondary" disabled>查询状态</button></div>
+<div class="light-readout" aria-live="polite"><div class="light-preview" aria-label="上次回执的灯态"><span id="lamp-red">红</span><span id="lamp-yellow">黄</span><span id="lamp-green">绿</span></div><div><strong id="light-state">尚未读取灯态</strong><p id="light-updated">状态仅在操作或查询后更新</p></div></div>
+<p id="light-message" class="hint">连接后自动查询一次；不会定时发送查询指令。</p><pre id="light-reply" class="light-reply" hidden></pre>
+<div class="nano-data"><h3>网络与使用说明</h3><p>自动循环：红 5 秒 → 绿 5 秒 → 黄 2 秒。点击任意颜色切回手动；断开连接不会停止自动循环，停止请点“全灭”。</p><button id="light-net" class="secondary" disabled>查看无线就绪状态（NET ON）</button><p>新 C3 首次在本程序「C3 音频」页通过 USB 配网；旧 M30 仍使用透传。只断开软件里的 USB 灯控，再选择 Wi-Fi TCP，不必拔供电线。</p><p>屏幕上的颜色表示上次回执，自动循环期间请点“查询状态”读取当前阶段。</p><a href="/Nano_HLK_M30.ino" download="Nano_HLK_M30.ino" class="button-link secondary">下载老灯通用固件（不适用于玩具灯）</a></div>
+<div id="toy-audio" hidden>
+<h3>TF 卡语音 · ESP32-C3</h3>
+<p>任务完成固定播放你放在 <code>/mp3/0001.mp3</code> 的录音。按钮随机播放 <code>0002.mp3</code> 起连续编号的文件，至少两条就不会连播同一条。换录音不必重刷。</p>
+<label>按键曲目数（0 表示静音） <input id="toy-count" type="number" min="0" max="32" step="1" value="3"></label>
+<button id="toy-save">保存到灯板</button> <button id="toy-test">试听完成语音</button>
+<div id="toy-number" hidden><label>TF 卡曲目编号 <input id="toy-track" type="number" min="1" max="3000" step="1" value="1"></label> <button id="toy-play">点播此曲</button></div>
+<p id="toy-hint" class="hint" aria-live="polite"></p>
+</div>
+</section>
+<section id="tab-ai" class="tab-panel panel" hidden>
+<div class="section-head"><div><h2>AI指示灯</h2><p class="section-subtitle">多个 AI、多个任务，共用一盏实体状态灯。</p></div><span id="ai-badge" class="badge">跟随已暂停</span></div>
+<div class="ai-connection" id="ai-connection"><div class="ai-connection-heading"><span class="mini-heading">灯板连接</span><span id="ai-connection-status" class="badge">未连接</span></div><div class="ai-connection-main"><strong id="ai-connection-type">尚未连接灯板</strong><code id="ai-connection-endpoint">—</code></div><p id="ai-connection-path">连接后显示灯控通道</p><small id="ai-connection-seen">尚无灯板回执</small></div>
+<details class="config-details" id="startup-settings" open><summary>开机自启与自动连接</summary>
+<div class="startup-options"><label class="toggle"><input id="startup-logon" type="checkbox">登录 Windows 后后台启动</label><label class="toggle"><input id="startup-connect" type="checkbox">启动后自动连接，掉线自动重连</label><label class="toggle"><input id="startup-follow" type="checkbox">自动连接成功后开启 AI 跟随</label></div>
+<p class="hint" id="startup-target">先成功连接一次灯板，程序会记住 USB 或 Wi-Fi TCP 设备。</p>
+<div class="form-actions"><button id="startup-save" class="secondary">保存启动设置</button><button id="startup-resume" class="secondary">恢复自动重连</button></div>
+<p class="hint" id="startup-feedback" role="status"></p><p class="hint">开机启动不弹网页，双击托盘图标可打开。手动断开或使用 AT 配置会暂停本次重连；移动安装目录后需重新保存开机启动。</p></details>
+<div class="ai-summary"><div><span class="mini-heading">当前汇总状态</span><strong id="ai-state">未接入</strong><p id="ai-target">开启跟随后显示在灯板上</p></div><div class="ai-beacon" id="ai-beacon" aria-label="目标灯效预览"><i></i></div></div>
+<details class="ai-appearance" id="ai-appearance"><summary>灯色与灯效配置 <span id="ai-settings-summary">已保存默认灯效</span></summary><div class="ai-patterns"><div class="ai-pattern-row"><strong>空闲 / 完成</strong><div><label for="pattern-idle-color">灯色</label><select id="pattern-idle-color" data-pattern-color="idle"><option value="RED">红灯</option><option value="YELLOW">黄灯</option><option value="GREEN">绿灯</option><option value="OFF">熄灯</option></select></div><div><label for="pattern-idle-effect">灯效</label><select id="pattern-idle-effect" data-pattern-effect="idle"><option value="SOLID">常亮</option><option value="BREATHE">呼吸</option><option value="SLOW">慢闪</option><option value="FAST">快闪</option></select></div><span id="pattern-idle-saved" class="pattern-saved"></span></div><div class="ai-pattern-row"><strong>执行中</strong><div><label for="pattern-running-color">灯色</label><select id="pattern-running-color" data-pattern-color="running"><option value="RED">红灯</option><option value="YELLOW">黄灯</option><option value="GREEN">绿灯</option><option value="OFF">熄灯</option></select></div><div><label for="pattern-running-effect">灯效</label><select id="pattern-running-effect" data-pattern-effect="running"><option value="SOLID">常亮</option><option value="BREATHE">呼吸</option><option value="SLOW">慢闪</option><option value="FAST">快闪</option></select></div><span id="pattern-running-saved" class="pattern-saved"></span></div><div class="ai-pattern-row"><strong>等待确认</strong><div><label for="pattern-waiting-color">灯色</label><select id="pattern-waiting-color" data-pattern-color="waiting"><option value="RED">红灯</option><option value="YELLOW">黄灯</option><option value="GREEN">绿灯</option><option value="OFF">熄灯</option></select></div><div><label for="pattern-waiting-effect">灯效</label><select id="pattern-waiting-effect" data-pattern-effect="waiting"><option value="SOLID">常亮</option><option value="BREATHE">呼吸</option><option value="SLOW">慢闪</option><option value="FAST">快闪</option></select></div><span id="pattern-waiting-saved" class="pattern-saved"></span></div><div class="ai-pattern-row"><strong>异常 / 报错</strong><div><label for="pattern-error-color">灯色</label><select id="pattern-error-color" data-pattern-color="error"><option value="RED">红灯</option><option value="YELLOW">黄灯</option><option value="GREEN">绿灯</option><option value="OFF">熄灯</option></select></div><div><label for="pattern-error-effect">灯效</label><select id="pattern-error-effect" data-pattern-effect="error"><option value="SOLID">常亮</option><option value="BREATHE">呼吸</option><option value="SLOW">慢闪</option><option value="FAST">快闪</option></select></div><span id="pattern-error-saved" class="pattern-saved"></span></div></div><p class="hint">黄灯 D5、绿灯 D6 支持呼吸；红灯 D4 支持常亮和闪烁。无有效 AI 状态或心跳中断时固定熄灯。</p><div class="form-actions"><button id="ai-save-patterns" class="primary" disabled>保存灯效</button><button id="ai-reset-patterns" class="secondary">恢复默认</button></div><p id="ai-settings-note" class="hint" role="status">设置保存在本机，重启AI指示灯仍有效。</p></details>
+<p class="hint">优先级：异常 → 等待确认 → 执行中 → 空闲。没有有效状态时熄灯。一个任务完成不会盖掉另一个仍在执行的任务。</p>
+<div class="form-actions"><button id="ai-enable" class="primary">开启自动跟随</button><button id="ai-disable" class="secondary" disabled>暂停并熄灯</button><button id="ai-connect-tab" class="secondary">连接灯板</button></div>
+<div class="form-actions"><button id="ai-ack-errors" class="secondary" hidden>已查看，恢复正常</button></div><p id="ai-ack-note" class="hint" role="status"></p>
+<p id="ai-link" class="hint">先在灯控调试中连接 Nano。</p>
+<div class="ai-source-head"><h3>已接入的 AI 会话</h3><label class="toggle"><input id="ai-codex" type="checkbox" checked>监听本机 Codex</label></div>
+<p id="ai-observer" class="hint">读取本地任务状态中…</p><div id="ai-sessions" class="ai-sessions" aria-live="polite"></div>
+<details class="config-details"><summary>试亮与接入其他 AI</summary><p>试亮持续 8 秒，然后恢复自动跟随；没有开启跟随时恢复熄灯。</p><div class="ai-preview-buttons"><button data-ai-preview="idle" class="secondary">试亮绿灯</button><button data-ai-preview="running" class="secondary">试亮黄灯呼吸</button><button data-ai-preview="error" class="secondary">试亮红灯闪烁</button><button data-ai-preview="waiting" class="secondary">试亮黄灯闪烁</button></div><p>其他 AI 使用本机状态接口接入，每个会话使用不同 session。示例命令（在AI指示灯程序目录运行）：</p><pre class="light-reply">python .\server.py --signal running --source Claude --session task-1 --ttl 120
+python .\server.py --signal waiting --source Claude --session task-1 --ttl 3600
+python .\server.py --signal idle --source Claude --session task-1 --ttl 3600</pre><p>状态包括 running、waiting、error、idle、offline；长任务每 15 秒发送 heartbeat。本目录的 ai_signal.py 和 claude_hook.py 都复用统一版的本机接入端点。未配置接入的 AI 不会被自动识别。</p></details>
+<details class="config-details" id="screen-settings" open><summary>OLED 屏幕 · 代码雨与方向</summary>
+<p>处理时显示代码雨，成功结束显示“已完成”。屏幕颜色由硬件决定。</p>
+<div class="form-actions">
+<label>屏幕方向 <select id="screen-rotation"><option value="0">横屏</option><option value="90">竖屏 · 顺时针</option><option value="270">竖屏 · 逆时针</option><option value="180">横屏 · 倒置</option></select></label>
+<label>显示模式 <select id="screen-mode"><option value="AUTO">自动跟随模型</option><option value="RAIN">代码雨预览</option><option value="DONE">已完成预览</option><option value="STATUS">仅显示状态</option><option value="OFF">关屏</option></select></label>
+<button id="screen-save" class="primary">保存屏幕设置</button>
+</div>
+<label>完成时显示的文字 <input id="screen-done-text" maxlength="32" value="已完成" placeholder="例如：已完成，请查收" autocomplete="off"></label>
+<p id="screen-feedback" role="status">等待屏幕回执。</p>
+<label>临时通知 <textarea id="screen-notice-text" maxlength="32" rows="2" placeholder="输入中英文通知，最多 32 字"></textarea></label>
+<div class="form-actions"><label>停留秒数 <input id="screen-notice-seconds" type="number" min="5" max="120" value="10"></label><button id="screen-notice-send" class="secondary">发送通知</button></div>
+<p id="screen-notice-feedback" role="status"></p>
+<p class="hint">保护固件：静态画面每 20 秒移位，30 秒后降亮度；待机、完成和离线 2 分钟后熄屏，新状态或通知自动唤醒。等待和异常保持可见，代码雨不熄屏。</p>
+<p class="hint">设置重启保留，连接 Nano 后自动应用。预览模式不会改变模型或指示灯状态；停止程序后 15 秒显示离线。关屏保持关闭。</p>
+</details>
+<details class="config-details" id="voice-extension"><summary>语音控制与播报 · LU-ASR01</summary>
+<p id="voice-state" role="status">语音板尚未联调。</p>
+<p>先说<strong>小鹿同学</strong>，再说：打开红灯、打开黄灯、打开绿灯、关闭灯光、恢复跟随、播报状态。</p>
+<p>语音手动控制会保持灯色，AI 心跳不会覆盖；说“恢复跟随”后使用最新 AI 状态。电脑需已开启自动跟随。工作台手动按钮和“暂停并熄灯”仍可控制灯光。</p>
+<p>需要给 Nano 和语音板刷入配套程序后接线。工程与编译记录在桌面“HLK-M30工具 / LU-ASR01语音扩展”；当前语音模型尚待生成，硬件未验证。</p>
+
+<p class="hint">播报预置的 AI 状态短句；本接口没有语音板播放回执，灯板回执不能证明已发声。</p>
+</details>
+<p id="ai-desktop-note" class="hint"></p>
+<p class="hint">Codex 使用当前客户端的本地状态记录，只读状态与时间，不上传对话。权限弹窗或普通文字提问未必有结构化状态，可由接入端显式上报 waiting。自动跟随时每 5 秒发送保活；Nano 超过 15 秒收不到心跳会自动熄灯。</p>
+</section>
+<section id="tab-audio" class="tab-panel panel" hidden>
+<div class="section-head"><div><h2>C3 音频剪辑与播报</h2><p class="section-subtitle">和灯控、AI 跟随共用同一条设备连接。</p></div><div class="aud-header"><span id="aud-device" class="badge">未连接</span><button id="aud-open-lights" class="secondary">灯控连接</button></div></div>
+<div class="aud-section"><h3>准备语音</h3><label for="aud-text">本地语音合成</label><textarea id="aud-text" maxlength="500" rows="2" placeholder="例如：别睡了，表！任务完成了！"></textarea>
+<div class="form-actions"><button id="aud-tts" class="secondary">生成语音</button><label class="button-link secondary aud-choose" for="aud-file">导入音频</label><input id="aud-file" type="file" accept="audio/*,.wav,.mp3,.flac,.m4a" hidden><button id="aud-read" class="secondary" data-device>USB 读回所选编号</button><button id="aud-clear" class="ghost">清除音频</button></div>
+<p id="aud-source" class="hint">音频源最长 5 分钟，每段最长 32 秒。常见录音格式优先用浏览器解码；不支持的格式可选装 FFmpeg。</p></div>
+<div class="aud-section"><h3>剪成多段</h3><canvas id="aud-wave" width="840" height="138" aria-label="波形，可拖动选择片段"></canvas>
+<div class="aud-grid">
+<label>起点（秒）<input id="aud-start" type="number" min="0" step=".001" value="0"></label><label>终点（秒）<input id="aud-end" type="number" min="0" step=".001" value="0"></label>
+<label>设备编号<input id="aud-slot" type="number" min="1" max="3000" value="2"></label><label>绑定状态<select id="aud-role"><option value="">不绑定</option><option value="IDLE">空闲</option><option value="RUNNING">运行</option><option value="WAITING">等待</option><option value="ERROR">报错</option><option value="DONE">完成</option><option value="OFFLINE">离线</option></select></label>
+</div><div class="form-actions"><button id="aud-preview" class="secondary">电脑试听选段</button><button id="aud-add" class="secondary">加入分段列表</button></div>
+<audio id="aud-player" controls hidden></audio><ol id="aud-cuts"></ol><label class="toggle"><input id="aud-auto-play" type="checkbox">推送后试播第一段</label>
+<div class="form-actions"><button id="aud-push" class="primary" data-device>推送分段到 C3</button><button id="aud-play" class="secondary" data-device>播放所选编号</button><button id="aud-stop" class="secondary" data-device>停止设备播报</button></div></div>
+<div class="aud-section"><h3>设备音量与绑定</h3><div class="aud-grid aud-two"><label>音量 0–9<input id="aud-gain" type="number" min="0" max="9" value="7"></label><label>顶部按键曲目数 0–32<input id="aud-count" type="number" min="0" max="32" value="3"></label></div>
+<div class="form-actions"><button id="aud-gain-apply" class="secondary" data-device>应用音量</button><button id="aud-count-apply" class="secondary" data-device>保存按键曲目数</button><button id="aud-fetch" class="secondary" data-device>读取设备配置</button></div>
+<div id="aud-bindings" class="aud-grid"></div><div class="form-actions"><button id="aud-bind" class="secondary" data-device>保存分状态配置</button><span class="hint">0 不播；同状态续期不会重播。</span></div></div>
+<details class="aud-section"><summary>C3 首次 Wi‑Fi 配置（USB）</summary><label>2.4 GHz Wi‑Fi 名称<input id="aud-ssid" maxlength="32" autocomplete="off"></label><div class="discover-actions"><button class="secondary" id="discover-c3-wifi">搜索附近 Wi-Fi</button><select id="discover-c3-choices" aria-label="附近 Wi-Fi" hidden></select><span id="discover-c3-hint" class="hint" role="status"></span></div><label>Wi‑Fi 密码<input id="aud-password" type="password" maxlength="64" autocomplete="new-password"></label>
+<div class="form-actions"><button id="aud-wifi" class="secondary" data-device>通过 USB 配 Wi‑Fi</button><button id="aud-net" class="secondary" data-device>查询 C3 Wi‑Fi</button></div></details>
+<progress id="aud-progress" max="100" value="0"></progress><p id="aud-result" role="status" aria-live="polite" class="hint">准备音频不需要设备；推送前在「灯控调试」连接 C3。</p>
+</section>
+
+<section id="tab-firmware" class="tab-panel panel" hidden><div class="section-head"><div><h2>固件升级入口</h2><p class="section-subtitle">通过普通 AT 进入 Recovery，无需短接 ES/DF。</p></div><span id="upgrade-badge" class="badge">待检测</span></div>
+<div class="firmware-state"><div class="firmware-symbol">↑</div><div><h3 id="upgrade-title">先连接 USB 串口</h3><p id="upgrade-description">AI指示灯会检查模块是否支持 UP 指令，再开放升级入口。</p></div></div><div class="form-actions"><button id="upgrade" class="primary" disabled>进入升级模式</button><button id="return-at" class="secondary" disabled>返回普通 AT</button></div>
+<ol class="steps compact"><li><strong>确认升级能力</strong><p><code>at+UP=?</code> 应回复 <code>UP=1:UART-RECOVERY-V1</code>。</p></li><li><strong>进入 Recovery</strong><p>AI指示灯发送 UP 指令，切到 115200 并验证恢复程序版本。成功后状态变为“升级模式”。</p></li><li><strong>交给匹配的升级器</strong><p>点击左侧“释放串口”，再由 HLK 原协议升级器连接。这里提供模式切换，当前未提供 BIN 文件写入。</p></li></ol><p class="hint">Recovery 命令使用 CRLF；普通 AT 使用 CR，AI指示灯自动处理。Loader / Recovery 更新仍需编程器，不能将整片 BIN 当普通串口文件发送。</p></section>
+<section class="panel status-panel" aria-live="polite"><div class="status-title"><i class="dot" id="status-dot"></i><strong id="stage">未连接</strong><span id="progress-count"></span><button id="stop" class="text-button danger" hidden>停止</button></div><p id="message">选择串口，读取小板当前状态。</p><progress id="progress" max="1" value="0" hidden aria-label="操作进度"></progress><div id="ui-error" class="error" role="alert" hidden></div><p id="status-warnings" class="warning-text" hidden></p></section>
+</div></div>
+<details class="panel log-panel"><summary><span>通信记录 <small>本次会话 · 密码隐藏</small></span><span id="log-count">0 条</span></summary><div class="log-tools"><span>自动状态刷新只记录异常</span><button id="export" class="text-button">导出记录</button></div><div id="logs" class="logs" role="log" aria-live="off"><div class="empty-log">连接后显示命令和回复。</div></div></details>
+</main><footer><span>AI 指示灯 3.0.0</span><span>设备状态来自实际回复 · 未确认的联网状态单独标明</span></footer></div>
+<dialog id="action-dialog"><form method="dialog"><div class="eyebrow">设备操作</div><h2 id="dialog-title"></h2><p id="dialog-description"></p><div class="form-actions"><button value="cancel" class="secondary">取消</button><button id="dialog-confirm" value="confirm" class="primary">继续</button></div></form></dialog>
+</body></html>
