@@ -1,0 +1,17 @@
+/build/
+/dist/
+*.bin
+*.elf
+*.map
+*.wav
+*.pcm
+*.exe
+/private/
+/backup/
+.env*
+__pycache__/
+*.pyc
+*.pdb
+track*.pcm
+wire.bin
+.venv/
