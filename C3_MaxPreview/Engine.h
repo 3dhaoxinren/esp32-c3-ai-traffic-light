@@ -39,30 +39,37 @@ inline void packet(AudioCommand c,uint8_t b[10]){
 struct Audio {
   bool sample=false, stable=false;
   uint16_t pending=0, lastButton=0, lastSent=0;
-  uint8_t buttonCount=3; bool manualPending=false;
+  uint8_t buttonCount=3; bool manualPending=false,allButtons=false;
+  uint16_t buttonTracks[32]={2,3,4};
   uint32_t rng=0x791b31u;
   void seed(uint32_t v){rng=v?v:0x791b31u;}
   uint32_t randomWord(){rng^=rng<<13;rng^=rng>>17;rng^=rng<<5;return rng;}
-  void configure(uint8_t n){buttonCount=n;lastButton=0;if(!manualPending && pending>1)pending=0;}
-  void requestButton(){
-    if(!buttonCount || manualPending || pending==1)return;
-    uint16_t t;
-    if(buttonCount==1)t=2;
-    else if(lastButton>=2 && lastButton<=1+buttonCount) {
-      t=2+randomWord()%(buttonCount-1);if(t>=lastButton)++t;
-    }else t=2+randomWord()%buttonCount;
-    pending=t;
+  void configure(uint8_t n,const uint16_t *tracks=nullptr,bool all=false){
+    buttonCount=n;allButtons=all;lastButton=0;if(!manualPending)pending=0;
+    for(unsigned i=0;i<n;++i)buttonTracks[i]=tracks?tracks[i]:uint16_t(i+2);
+  }
+  void requestButton(bool (*available)(unsigned)=nullptr){
+    if(manualPending)return;
+    uint16_t next=0, fallback=0;unsigned candidates=0;
+    const auto consider=[&](unsigned id){
+      if(available&&!available(id))return;
+      if(id==lastButton){fallback=uint16_t(id);return;}
+      if(randomWord()%++candidates==0)next=uint16_t(id);
+    };
+    if(allButtons&&available){for(unsigned n=1;n<=3000;++n)consider(n);}
+    else {for(unsigned i=0;i<buttonCount;++i)consider(buttonTracks[i]);}
+    pending=next?next:fallback;
   }
   uint8_t stage=0;
   uint32_t edgeAt=0,stageAt=0,lastPlay=0,presses=0,plays=0;
   void begin(uint32_t now,bool down){sample=stable=down;edgeAt=stageAt=now;}
   void request(){pending=1;manualPending=true;}
   void requestTrack(uint16_t n){pending=n;manualPending=true;}
-  AudioCommand tick(uint32_t now,bool down){
+  AudioCommand tick(uint32_t now,bool down,bool (*available)(unsigned)=nullptr){
     if(down!=sample){sample=down;edgeAt=now;}
     if(sample!=stable && uint32_t(now-edgeAt)>=35){
       stable=sample;
-      if(stable){++presses;requestButton();}
+      if(stable){++presses;requestButton(available);}
     }
     if(stage==0 && uint32_t(now-stageAt)>=3000){
       ++stage;stageAt=now;return {0x09,2}; // TF, NO ACK
@@ -72,7 +79,7 @@ struct Audio {
     }
     if(stage==2 && uint32_t(now-stageAt)>=200) ++stage;
     if(stage==3 && pending && (!plays || uint32_t(now-lastPlay)>=160)){
-      lastSent=pending;pending=0;if(!manualPending && lastSent>1)lastButton=lastSent;manualPending=false;lastPlay=now;++plays;return {0x12,lastSent}; // /mp3/0001.mp3, not file copy order
+      lastSent=pending;pending=0;if(!manualPending)lastButton=lastSent;manualPending=false;lastPlay=now;++plays;return {0x12,lastSent};
     }
     return {0,0};
   }

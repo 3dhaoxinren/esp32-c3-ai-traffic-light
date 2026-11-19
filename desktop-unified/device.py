@@ -1,7 +1,7 @@
 """C3 MAX98357A preview. Nothing is opened until the user asks."""
 import ipaddress, re, shutil, socket, subprocess, tempfile, wave, zlib
 from pathlib import Path
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 LIMIT=1024000
 RATE=16000
 MAX_GAIN=9
@@ -30,13 +30,14 @@ def loadfile(path,ffmpeg=None):
 def savewav(path,data):
     with wave.open(str(path),'wb') as w:
         w.setparams((1,2,RATE,0,'NONE','not compressed'));w.writeframes(valid(data))
-def speech(text):
+def speech(text,rate=0):
     if not text.strip() or len(text)>500:raise ValueError("请输入 1–500 字，生成的语音最多 32 秒。")
     import os
     with tempfile.TemporaryDirectory() as d:
         path=Path(d)/'tts.wav'
         script=r"""$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Speech;
 $s=[System.Speech.Synthesis.SpeechSynthesizer]::new();
+$s.Rate=[int]$env:C3_SPEECH_RATE;
 $t=[IO.File]::ReadAllText($env:C3_SPEECH_FILE,[Text.Encoding]::UTF8);
 if($t -match '[\u3400-\u9fff]') {
 $v=$s.GetInstalledVoices() | Where-Object { $_.Enabled -and $_.VoiceInfo.Culture.Name -like 'zh-*' } | Select-Object -First 1;
@@ -45,7 +46,7 @@ $f=[System.Speech.AudioFormat.SpeechAudioFormatInfo]::new(16000,[System.Speech.A
 try {$s.SetOutputToWaveFile($env:C3_SPEECH_WAV,$f);$s.Speak($t)} finally {$s.Dispose()}"""
         inp=Path(d)/'text.txt';inp.write_text(text,encoding='utf-8')
         p=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',script],
-            env={**os.environ,'C3_SPEECH_WAV':str(path),'C3_SPEECH_FILE':str(inp)},capture_output=True,timeout=60,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            env={**os.environ,'C3_SPEECH_WAV':str(path),'C3_SPEECH_FILE':str(inp),'C3_SPEECH_RATE':str(round(rate/5))},capture_output=True,timeout=60,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         if p.returncode: raise RuntimeError("Windows 本地语音合成失败。中文需要可用的中文 SAPI 语音，也可导入录音。")
         return readwav(path)
 def ports():
@@ -58,6 +59,32 @@ def usb_address(address):
     if name not in available:
         raise ValueError("未找到 C3 原生 USB。请选择 C3 串口（例如 COM19 或 19）；Nano/CH340 不会被打开。")
     return available[name]
+
+@contextmanager
+def usb_peer_for_ip(ip):
+    """Find the physical USB side of a Wi-Fi-connected C3 without moving the lamp connection."""
+    wanted=str(ipaddress.IPv4Address(ip))
+    candidates=ports()
+    if not candidates:raise ValueError("电脑回读需插上这块 C3 的原生 USB 数据线；灯控仍可保持 Wi‑Fi。")
+    if len(candidates)>4:raise ValueError("接入的小板太多，请在灯控页直接选择该 C3 的原生 USB。")
+    with ExitStack() as stack:
+        found=[]
+        for port in candidates:
+            with ExitStack() as attempt:
+                try:
+                    f=attempt.enter_context(connection('USB',port))
+                    f.timeout=.7
+                    identify(f)
+                    st=net_status(f)
+                    if st.get('state')!='ONLINE' or st.get('ip')!=wanted:continue
+                    f.timeout=2
+                    stack.enter_context(attempt.pop_all())
+                    found.append(f)
+                except (OSError,ValueError,RuntimeError):
+                    continue
+        if len(found)!=1:
+            raise ValueError("没有找到与当前 Wi‑Fi 灯板对应的原生 USB；请接上同一块 C3，或在灯控页选它的 USB。")
+        yield found[0]
 @contextmanager
 def connection(mode,address):
     if mode=='USB':
@@ -109,7 +136,7 @@ def upload(f,slot,data,progress=lambda n:None):
 
 # Application-level API: no GUI, device registry, or credentials persisted here.
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 @dataclass(frozen=True)
 class Target:
@@ -179,13 +206,38 @@ def set_gain(f,n):
     if not isinstance(n,int) or not 0<=n<=9:raise ValueError("音量是 0–9 档。")
     require(f,f'PCM GAIN {n}',f'OK PCM gain={n}')
 
+def save_gain(f,n):
+    if type(n) is not int or not 0<=n<=9:raise ValueError("音量是 0–9 档。")
+    require(f,f'PCM GAIN SAVE {n}',f'OK PCM default_gain={n}')
+
+def buttons_reply(f,command):
+    line=okay(f,command,'OK SOUND BUTTONS ')
+    m=re.fullmatch(r'OK SOUND BUTTONS mode=(ALL|CUSTOM) tracks=(-|[0-9]{1,4}(?:,[0-9]{1,4}){0,31})',line)
+    if not m:raise RuntimeError("C3 按键歌单格式错误。")
+    slots=[] if m[2]=='-' else list(map(int,m[2].split(',')))
+    if len(set(slots))!=len(slots) or any(not 1<=n<=3000 for n in slots):
+        raise RuntimeError("C3 按键歌单编号错误。")
+    return {'mode':m[1],'slots':slots}
+
+def buttons_status(f):
+    return buttons_reply(f,'SOUND BUTTONS STATUS')
+
+def save_buttons(f,mode,slots):
+    if mode not in ('ALL','CUSTOM') or not isinstance(slots,list) or len(slots)>32 or any(
+        type(n) is not int or not 1<=n<=3000 for n in slots) or len(set(slots))!=len(slots):
+        raise ValueError("自选歌单最多 32 个互不重复的有效录音。")
+    res=buttons_reply(f,f"SOUND BUTTONS SET {mode} "+(','.join(map(str,slots)) or '-'))
+    if res!={'mode':mode,'slots':slots}:raise RuntimeError("C3 没有确认新的按键歌单。")
+    return res
+
 def set_button_count(f,n):
     if not isinstance(n,int) or not 0<=n<=32:raise ValueError("按键语音数须为 0–32。")
     require(f,f'SOUND COUNT {n}',f'OK SOUND count={n}')
 
-def play_track(f,slot):
+def play_track(f,slot,gain=None):
     if not isinstance(slot,int) or not 1<=slot<=3000:raise ValueError("编号是 1–3000。")
-    require(f,f'PCM PLAY {slot}','OK PCM playing')
+    if gain is not None and (type(gain) is not int or not 0<=gain<=9):raise ValueError("音量是 0–9 档。")
+    require(f,f'PCM PLAY {slot}'+(f' {gain}' if gain is not None else ''),'OK PCM playing')
 
 def transfer(target,data,slot,play,gain,progress=lambda n:None,connector=connection):
     def work(f):
@@ -236,7 +288,7 @@ class Segment:
     state:str=''
     def length(self,source):
         if not 0<=self.start<self.end<=len(source)//2:raise ValueError("选段超出音频范围。")
-        if not 1<=self.slot<=3000:raise ValueError("设备编号须为 1–3000。")
+        if not (1<=self.slot<=3000 or self.slot==0 and self.state):raise ValueError("设备编号须为 1–3000。")
         if self.state and self.state not in {s for s,_ in STATES}:raise ValueError("状态无效。")
         n=(self.end-self.start)*2
         if n>LIMIT:raise ValueError("单段不得超过 32 秒。")
@@ -247,62 +299,187 @@ class Segment:
 
 def get_state_tracks(f):
     info=okay(f,'SOUND STATE STATUS','OK SOUND STATE ')
-    return {k:int(v) for k,v in kv(info).items() if v.isdigit()}
+    row=kv(info)
+    expected={s.lower() for s,_ in STATES}
+    if not all(re.fullmatch(r'[0-9]{1,4}',row.get(k,'')) and int(row[k])<=3000 for k in expected):
+        raise RuntimeError("C3 未返回完整的状态绑定；未写入。")
+    return {k:int(row[k]) for k in expected}
+
+def resolve_state_slots(f,parts,bindings,progress,mode,button_slots=()):
+    # Keep completion key (1), button pool (2–33), and ordinary low numbers separate.
+    # High slots occupied by unrelated/manual clips or assigned to other states are skipped.
+    first,last=2937,3000
+    uses=set(bindings.values())|set(button_slots)
+    reserved={s.slot for s,_ in parts if s.slot}
+    table=dict(zip((k for k,_ in STATES),range(last-len(STATES)+1,last+1)))
+    resolved=[]
+    for s,size in parts:
+        if s.slot:
+            resolved.append((s,size));continue
+        own=bindings[s.state.lower()]
+        if first<=own<=last and own not in reserved and own not in button_slots and list(bindings.values()).count(own)==1:
+            slot=own
+        else:
+            slot=0
+            prefer=table[s.state]
+            for n in (prefer,*range(last,first-1,-1)):
+                if n in uses or n in reserved:continue
+                send(f,f"PCM {'INFO' if mode=='USB' else 'META'} {n}");r=response(f)
+                progress(0)
+                if r=='ERR PCM track not found':
+                    slot=n;break
+                if not re.fullmatch(r'OK PCM bytes=[0-9]+',r):
+                    raise RuntimeError("无法确认可用的状态录音编号；旧固件请通过 USB 连接，或更新 C3 固件。未写入。")
+            if not slot:raise ValueError("状态录音编号已用满；未写入。")
+        reserved.add(slot)
+        resolved.append((replace(s,slot=slot),size))
+    return resolved
 def set_state_track(f,state,slot):
     if state not in {k for k,_ in STATES} or not isinstance(slot,int) or not 0<=slot<=3000:
         raise ValueError("状态绑定须用有效状态和 0–3000 编号。")
     require(f,f'SOUND STATE {state} {slot}',f'OK SOUND STATE track={slot}')
 
+def read_track_pcm(f,slot,progress=lambda n:None,expected_size=None):
+    if type(slot) is not int or not 1<=slot<=3000:raise ValueError("编号须为 1–3000。")
+    info=kv(okay(f,f'PCM INFO {slot}','OK PCM '))
+    size=int(info.get('bytes','0'))
+    if not 0<size<=LIMIT or size%2:raise ValueError("设备返回的音频长度无效。")
+    if expected_size is not None and size!=expected_size:
+        raise ValueError("这段录音已变化，请刷新设备列表再试听。")
+    data=bytearray();end=time.monotonic()+75
+    for off in range(0,size,120):
+        if time.monotonic()>end:raise RuntimeError("读回录音超时，请重试。")
+        n=min(120,size-off)
+        q=kv(okay(f,f'PCM READ {slot} {off} {n}','OK PCM '))
+        seq=q.get('hex','')
+        if q.get('off')!=str(off) or len(seq)!=2*n or not re.fullmatch(r'[A-F0-9]+',seq):
+            raise RuntimeError("音频读回数据不完整。")
+        data.extend(bytes.fromhex(seq))
+        if off%3840==0:progress(len(data)*100//size)
+    progress(100)
+    return valid(bytes(data))
+
 def stored_audio(target,slot,progress=lambda n:None,connector=connection):
     if target.mode!='USB':raise ValueError("请通过 USB 读取灯里已存的语音。")
-    if not 1<=slot<=3000:raise ValueError("编号须为 1–3000。")
-    def work(f):
-        info=kv(okay(f,f'PCM INFO {slot}','OK PCM '))
-        size=int(info.get('bytes','0'))
-        if not 0<size<=LIMIT or size%2:raise ValueError("设备返回的音频长度无效。")
-        data=bytearray()
-        for off in range(0,size,120):
-            n=min(120,size-off)
-            q=kv(okay(f,f'PCM READ {slot} {off} {n}','OK PCM '))
-            seq=q.get('hex','')
-            if q.get('off')!=str(off) or len(seq)!=2*n or not re.fullmatch(r'[A-F0-9]+',seq):
-                raise RuntimeError("音频读回数据不完整。")
-            data.extend(bytes.fromhex(seq))
-            if off%3840==0:progress(len(data)*100//size)
-        progress(100)
-        return valid(bytes(data))
-    return with_link(target,work,connector)
+    return with_link(target,lambda f:read_track_pcm(f,slot,progress),connector)
 
-def push_segments(target,source,segments,play,gain,progress=lambda n:None,connector=connection):
+def push_segments(target,source,segments,play,gain,progress=lambda n:None,connector=connection,features=()):
     parts=[(s,s.length(source)) for s in segments]
-    ids={s.slot for s,_ in parts};state=[s.state for s,_ in parts if s.state]
-    if not parts or len(ids)!=len(parts) or len(state)!=len(set(state)):
+    ids=[s.slot for s,_ in parts if s.slot];state=[s.state for s,_ in parts if s.state]
+    if not parts or len(ids)!=len(set(ids)) or len(state)!=len(set(state)):
         raise ValueError("请选择选段；同批不能重复编号或状态。")
     n=sum(size for _,size in parts)
     def work(f):
+        bindings=get_state_tracks(f) if state else None
         st=kv(okay(f,'PCM STATUS','OK PCM '))
         if st.get('i2s')!='1':raise RuntimeError("设备功放未初始化。")
         if st.get('fs')!='1':
             if target.mode!='USB':raise RuntimeError("语音分区未就绪；先用 USB 初始化空白分区。")
             require(f,'PCM INIT','OK PCM ready')
-        if state:get_state_tracks(f) # fail early if this firmware does not support state mapping
+        button_slots=buttons_status(f)['slots'] if state and 'BUTTONS' in features else ()
+        assigned=resolve_state_slots(f,parts,bindings,progress,target.mode,button_slots) if state else parts
         done=0
-        for s,size in parts:
+        for s,size in assigned:
             try:
                 upload(f,s.slot,s.audio(source),lambda pct:progress((done*100+pct*size)//n))
             except (RuntimeError,OSError) as e:
                 raise RuntimeError(f"编号 {s.slot:04d} 未保存；此前完成的片段 {done} 字节已留在设备，尚未绑定状态。{e}") from e
             done+=size
-        for s,_ in parts:
+        for s,_ in assigned:
             if s.state:
                 try:set_state_track(f,s.state,s.slot)
                 except (RuntimeError,OSError) as e:
                     raise RuntimeError(f"片段已保存，但绑定 {s.state} 时中断。请读取当前绑定后重试。{e}") from e
+                bindings[s.state.lower()]=s.slot
         progress(100)
+        message=f"{len(parts)} 段已保存并校验"+(f"，已绑定 {len(state)} 个任务状态" if state else "")+"。"
         if play:
             try:
-                set_gain(f,gain);play_track(f,parts[0][0].slot)
+                if 'GAIN_SAVE' in features:play_track(f,assigned[0][0].slot,gain)
+                else:set_gain(f,gain);play_track(f,assigned[0][0].slot)
             except (RuntimeError,OSError) as e:
-                return f"{len(parts)} 段已保存，但试听未开始：{e}"
-        return f"{len(parts)} 段已保存并校验"+(f"，已绑定 {len(state)} 个任务状态" if state else "")+"。"
+                message+=f"设备试播未开始：{e}"
+        return {'message':message,'bindings':bindings,'saved_states':state,
+                'saved_tracks':[{'slot':s.slot,'bytes':size} for s,size in assigned]}
     return with_link(target,work,connector)
+
+def push_button_clips(target,f,source,segments,progress,features):
+    for s in segments:s.length(source)
+    config=buttons_status(f)
+    if len(config['slots'])+len(segments)>32:
+        raise ValueError('自选歌单最多 32 段，请先移除不用的项目。')
+    st=kv(okay(f,'PCM STATUS','OK PCM '))
+    if st.get('fs')!='1':
+        if target.mode!='USB':raise RuntimeError("语音分区未就绪；先用 USB 连接。")
+        require(f,'PCM INIT','OK PCM ready')
+    occupied=set(config['slots'])|set(get_state_tracks(f).values())
+    occupied.update(r['slot'] for r in list_tracks(f,progress))
+    free=[n for n in range(2936,2800,-1) if n not in occupied][:len(segments)]
+    if len(free)!=len(segments):raise RuntimeError("自选按键录音编号已用满；未写入。")
+    result=push_segments(target,source,[replace(s,slot=n,state='') for s,n in zip(segments,free)],False,7,
+                         progress,connector=lambda *_: nullcontext(f),features=features)
+    result['buttons']=save_buttons(f,config['mode'],config['slots']+free)
+    result['message']=f'{len(free)} 段已写入并加入顶部按键的自选歌单。'
+    return result
+
+def list_tracks(f,progress):
+    after=0;tracks=[]
+    while True:
+        s=okay(f,f'PCM LIST {after}','OK PCM ')
+        m=re.fullmatch(r'OK PCM next=(\d{1,4}) entries=(-|\d{1,4}:\d{1,7}(?:,\d{1,4}:\d{1,7}){0,15})',s)
+        if not m:raise RuntimeError("C3 音频列表格式异常。")
+        for v in () if m[2]=='-' else m[2].split(','):
+            slot,size=map(int,v.split(':'))
+            if not after<slot<=3000 or not 0<size<=LIMIT or size%2:
+                raise RuntimeError("C3 音频列表顺序或长度异常。")
+            tracks.append({'slot':slot,'bytes':size});after=slot
+        nxt=int(m[1])
+        if not nxt:return tracks
+        if nxt!=after or m[2].count(',')!=15 or after>=3000:raise RuntimeError("C3 音频列表分页异常。")
+        progress(80)
+
+def live_play(f,pcm,gain,progress,cancel,scoped_gain=False,window=1):
+    if not 0<len(pcm)<=MAX_SOURCE or len(pcm)%2:raise ValueError('试听范围无效。')
+    if type(gain) is not int or not 0<=gain<=9:raise ValueError('音量应为 0–9。')
+    window=max(1,min(window,32))
+    if not scoped_gain:set_gain(f,gain)
+    s=okay(f,'PCM LIVE START'+(f' {gain}' if scoped_gain else ''),'OK PCM ')
+    m=re.fullmatch(r'OK PCM stream=([0-9A-F]{8})',s)
+    if not m:raise RuntimeError("C3 实时试听未就绪。")
+    token=m[1];closed=False
+    try:
+        off=0;deadline=time.monotonic()+4
+        while off<len(pcm):
+            if cancel.is_set():return 'C3 实时试听已停止；没有写入 Flash。'
+            frames=[(n,pcm[n:n+256]) for n in range(off,min(len(pcm),off+256*window),256)]
+            # LAN ACKs can each incur a Wi-Fi wakeup. Pipeline a bounded window and
+            # drain all replies, including non-accepted frames after ring backpressure.
+            f.write(''.join(f'PCM LIVE DATA {token} {n} {chunk.hex().upper()}\n' for n,chunk in frames).encode('ascii'))
+            accepted=off;blocked=False;invalid=False
+            for n,chunk in frames:
+                r=response(f)
+                if not blocked and r==f'OK PCM stream at={n+len(chunk)}':
+                    accepted=n+len(chunk)
+                elif r=='OK PCM stream wait' and n==accepted:
+                    blocked=True
+                elif not (blocked and r=='ERR PCM command, token or offset'):
+                    invalid=True
+            if invalid:raise RuntimeError('C3 未确认实时音频帧。')
+            if accepted>off:
+                off=accepted;deadline=time.monotonic()+4;progress(off*96//len(pcm))
+            else:
+                if time.monotonic()>deadline:raise RuntimeError('C3 实时试听缓冲超时。')
+                cancel.wait(.012)
+        require(f,f'PCM LIVE END {token}','OK PCM stream draining')
+        for _ in range(40):
+            if cancel.wait(.05):return 'C3 实时试听已停止；没有写入 Flash。'
+            st=kv(okay(f,'PCM STATUS','OK PCM ')).get('last')
+            if st=='ended':
+                closed=True
+                return 'C3 实时试听结束；没有写入 Flash。'
+            if st!='streaming':raise RuntimeError("C3 实时试听已中断。")
+        raise RuntimeError("C3 没有确认实时试听结束。")
+    finally:
+        if not closed:
+            try:require(f,f'PCM LIVE ABORT {token}','OK PCM stream stopped')
+            except (RuntimeError,OSError):pass

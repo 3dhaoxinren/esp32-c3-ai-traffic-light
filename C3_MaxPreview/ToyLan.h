@@ -6,6 +6,7 @@
 #include <Preferences.h>
 #include <lwip/sockets.h>
 #include <errno.h>
+#include "LanReadback.h"
 #endif
 namespace toyLan {
 constexpr uint16_t PORT=8080;
@@ -25,9 +26,10 @@ class Tx : public Print {
     memcpy(bytes+used,p,n);used+=n;return n;
   }
 };
-struct Peer { WiFiClient socket; LineBuffer<576> input{}; Tx tx; uint32_t txSince=0; };
+struct Peer { WiFiClient socket; LineBuffer<576> input{}; Tx tx; lanRead::Session readback; uint32_t txSince=0; };
 static Peer peers[2];
-static void drop(Peer &p){p.socket.stop();p.input={};p.tx.reset();}
+static Peer *commandPeer=nullptr;
+static void drop(Peer &p){p.socket.stop();p.input={};p.tx.reset();p.readback.reset();}
 static void closeAll(){for(auto &p:peers)drop(p);if(server)server.end();listeningIP=IPAddress();}
 static bool ready(){return WiFi.status()==WL_CONNECTED && (uint32_t)WiFi.localIP()!=0 && bool(server);}
 #else
@@ -35,6 +37,7 @@ static bool ready(){return false;}
 #endif
 static void begin(){
 #ifndef HOST_QA
+  lanRead::begin();
   WiFi.persistent(false);WiFi.setAutoReconnect(false);WiFi.setHostname("ai-lamp-c3");
   Preferences p;if(p.begin("toylan",true)){
     if(p.getBytesLength("profile")==sizeof(profile))p.getBytes("profile",&profile,sizeof(profile));
@@ -70,7 +73,16 @@ static void status(){
   reply->print(F("0.0.0.0"));
   reply->println(F(" port=8080"));
 }
-static bool command(const char *line,bool usb){
+static bool command(char *line,bool usb){
+#ifndef HOST_QA
+  if(!strncmp(line,"AUDX ",5)){
+    if(usb&&!strncmp(line,"AUDX PAIR ",10))lanRead::pairUsb(line+10,*reply);
+    else if(!usb&&commandPeer&&!strcmp(line,"AUDX CHALLENGE"))commandPeer->readback.challenge(*reply);
+    else if(!usb&&commandPeer&&!strncmp(line,"AUDX GET ",9))commandPeer->readback.get(line+9,*reply);
+    else reply->println(F("ERR AUDX command"));
+    return true;
+  }
+#endif
   if(strncmp(line,"NET ",4)!=0)return false;
   if(!usb){reply->println(F("ERR NET USB only"));return true;}
   if(!strcmp(line,"NET STATUS")){status();return true;}
@@ -103,6 +115,7 @@ static void tick(){
     if(pendingStart || int32_t(now-nextAttempt)>=0){
       pendingStart=false;nextAttempt=now+20000u;
       WiFi.begin(profile.ssid,profile.secret);
+      WiFi.setSleep(false); // keep realtime PCM receive latency below the audio buffer
     }
     return;
   }
@@ -121,15 +134,29 @@ static void tick(){
     if(!kept)fresh.stop();
   }
   for(auto &p:peers){
-    if(!p.socket.connected())continue;
+    if(!p.socket.connected()){
+      if(p.readback.streaming||p.readback.challenged)drop(p);
+      continue;
+    }
     if(p.tx.pos<p.tx.used){
       // Never let a stalled TCP reader block USB, the button, or the LED lease.
       int n=::send(p.socket.fd(),p.tx.bytes+p.tx.pos,p.tx.used-p.tx.pos,MSG_DONTWAIT);
       if(n>0){p.tx.pos+=size_t(n);if(p.tx.pos==p.tx.used)p.tx.reset();}
       else if(n==0 || (errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) || uint32_t(now-p.txSince)>2000)drop(p);
-      continue;
+      if(!p.socket.connected() || p.tx.pos<p.tx.used)continue;
     }
-    drain(p.socket,p.input,p.tx,false);
+    if(p.readback.streaming){
+      auto &r=p.readback;
+      if(!r.next()){drop(p);continue;}
+      if(r.streaming){
+        int n=::send(p.socket.fd(),r.packet+r.pos,r.len-r.pos,MSG_DONTWAIT);
+        if(n>0){r.pos+=size_t(n);r.lastWrite=now;}
+        else if(n==0 || (errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) ||
+                uint32_t(now-r.lastWrite)>3000)drop(p);
+        continue;
+      }
+    }
+    commandPeer=&p;drain(p.socket,p.input,p.tx,false);commandPeer=nullptr;
     if(p.tx.bad)drop(p); else if(p.tx.used)p.txSince=now;
   }
 #endif

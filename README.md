@@ -2,8 +2,9 @@
 
 ## Windows 统一版下载
 
-- [3.0.0 Windows x64 ZIP 便携版（不需要 Python）](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/download/v3.0.0/AI-Lamp-3.0.0-win-x64.zip)
-- [Release 说明、校验文件](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/tag/v3.0.0) · [统一版源码、局域网搜索和使用说明](desktop-unified/README.md)
+- [3.1.0 Windows x64 ZIP 便携版（不需要 Python）](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/download/v3.1.0/AI-Lamp-3.1.0-win-x64.zip)
+- [3.1.0 完整更新包（Windows + ESP32-C3 固件）](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/download/v3.1.0/AI-Lamp-3.1.0-update-kit.zip) · [更新与配对说明](UPGRADING.md)
+- [Release 说明、校验文件](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/tag/v3.1.0) · [统一版源码、局域网搜索和使用说明](desktop-unified/README.md)
 
 统一版支持 Nano 和 C3，保留托盘、自启、自动跟随与 C3 分段播报。AT 默认隐藏；Nano 接线页已取消。可搜索附近 Wi-Fi 和局域网灯板。下载后完整解压，双击文件夹内的 `AI-Lamp.exe`。
 
@@ -13,7 +14,7 @@
 - 红灯快闪＝报错；黄灯呼吸＝运行中；绿灯常亮＝空闲。
 - C3 接收主机发来的状态指令，不是在 C3 上运行 AI，也不自动监控桌面软件。
 - 可以按原键播放已存入的语音；本仓库不含语音素材和旧工作台。
-- 开机默认 **7 档**。7 / 8 / 9 档分别输出原 PCM 振幅的 50% / 75% / 100%。9 档只是数字信号不衰减，出现破音就退一档。
+- 出厂默认 **7 档**，桌面端保存的新档位会跨重启保留。7 / 8 / 9 档分别输出原 PCM 振幅的 50% / 75% / 100%。9 档只是数字信号不衰减，出现破音就退一档。
 
 ## 接线
 

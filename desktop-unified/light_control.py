@@ -155,7 +155,7 @@ class LightController:
         self.completion_key=None
         self.notice_until=0
         with self.lock:
-            self.state.update(sound_v2=False, numbered_play=False, sound_ready_at=0, sound_count=None, sound_message='',max_pcm=False,state_voice=False)
+            self.state.update(sound_v2=False, numbered_play=False, sound_ready_at=0, sound_count=None, sound_message='',max_pcm=False,state_voice=False,pcm_features=[])
             self.state.pop('screen', None)
             self.state.pop('notice_message', None)
         transport = data["transport"]
@@ -176,6 +176,7 @@ class LightController:
         else:
             host = validate_host(data["host"])
             self.link = socket.create_connection((host, data["tcp_port"]), timeout=3)
+            self.link.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1)
             self.link.settimeout(.1)
             self._set(endpoint=f"{host}:{data['tcp_port']}")
         self._command("STATUS")
@@ -196,8 +197,14 @@ class LightController:
         for x in self._lines(1.35):
             if x.startswith('OK SOUND STATE ') and ' done=' in x:
                 self._set(state_voice=True)
-                return
-            if x.startswith('ERR'):return
+                break
+            if x.startswith('ERR'):break
+        self._write('PCM FEATURES',quiet=True)
+        for x in self._lines(1.35):
+            if x.startswith('OK PCM features='):
+                self._set(pcm_features=[s for s in x.split('=',1)[1].split(',') if s in {'LIST','USB_DELETE','LIVE','GAIN_SAVE','BUTTONS','LAN_READ'}])
+                break
+            if x.startswith('ERR'):break
 
     def _write(self, command, quiet=False):
         payload = (command + "\r\n").encode("ascii")
@@ -418,7 +425,7 @@ class LightController:
                 pass
         self.link = None
         self.last_ai_command=None
-        self._set(connected=False,sound_v2=False,numbered_play=False,sound_ready_at=0,max_pcm=False,state_voice=False)
+        self._set(connected=False,sound_v2=False,numbered_play=False,sound_ready_at=0,max_pcm=False,state_voice=False,pcm_features=[])
 
     def shutdown(self):
         self.cancelled.set()

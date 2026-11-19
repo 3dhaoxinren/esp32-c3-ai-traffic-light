@@ -11,23 +11,44 @@
 #endif
 static wire::Audio audio;
 static uint8_t readCount(){
-#ifndef HOST_QA
   Preferences p;if(!p.begin("toysound",true))return 3;
   uint8_t n=p.getUChar("buttons",3);p.end();return n<=32?n:3;
-#else
-  return 3;
-#endif
+}
+struct ButtonList{uint16_t all=0,count=0,tracks[32]={};};
+static ButtonList buttonList(){
+  ButtonList x;x.all=audio.allButtons;x.count=audio.buttonCount;
+  memcpy(x.tracks,audio.buttonTracks,x.count*sizeof(uint16_t));return x;
+}
+static bool validButtons(const ButtonList &x){
+  if(x.all>1||x.count>32)return false;
+  for(unsigned i=0;i<x.count;++i){
+    if(!x.tracks[i]||x.tracks[i]>3000)return false;
+    for(unsigned k=0;k<i;++k)if(x.tracks[k]==x.tracks[i])return false;
+  }
+  return true;
+}
+static bool saveButtons(const ButtonList &x){
+  if(!validButtons(x))return false;
+  ButtonList previous=buttonList();
+  if(!memcmp(&previous,&x,sizeof x))return true;
+  Preferences p;if(!p.begin("toysound",false))return false;
+  const bool ok=p.putBytes("keyslots",&x,sizeof x)==sizeof x;p.end();
+  if(ok)audio.configure(x.count,x.tracks,x.all);return ok;
+}
+static void readButtons(){
+  audio.configure(readCount());
+  Preferences p;if(!p.begin("toysound",true))return;
+  ButtonList x;
+  bool ok=p.getBytesLength("keyslots")==sizeof x&&p.getBytes("keyslots",&x,sizeof x)==sizeof x;
+  p.end();if(ok&&validButtons(x))audio.configure(x.count,x.tracks,x.all);
 }
 static bool writeCount(uint8_t n){
-  if(n==audio.buttonCount)return true;
-#ifndef HOST_QA
-  Preferences p;if(!p.begin("toysound",false))return false;
-  bool ok=p.putUChar("buttons",n)==1;p.end();if(!ok)return false;
-#endif
-  audio.configure(n);return true;
+  ButtonList x;x.count=n;
+  for(unsigned i=0;i<n;++i)x.tracks[i]=i+2;
+  return saveButtons(x);
 }
 void tickAudio() {
-  const auto cmd=audio.tick(millis(),digitalRead(wire::BUTTON)==LOW);
+  const auto cmd=audio.tick(millis(),digitalRead(wire::BUTTON)==LOW,pcm::hasTrack);
   if(cmd.id==0x12)pcm::play(cmd.arg);
   pcm::tick();
 }
@@ -65,17 +86,20 @@ static int stateId(const char *s) {
   for(size_t i=0;i<AI_STATES;++i) if(strcmp(s,names[i])==0)return int(i);
   return -1;
 }
-static bool saveTrack(uint8_t state,uint16_t no) {
-  if(state>=AI_STATES||no>3000)return false;
-  if(stateTracks[state]==no)return true;
+static bool saveTracks(const uint16_t (&next)[AI_STATES]) {
+  if(!memcmp(stateTracks,next,sizeof stateTracks))return true;
 #ifndef HOST_QA
-  uint16_t next[AI_STATES]; memcpy(next,stateTracks,sizeof next); next[state]=no;
   Preferences p;
   if(!p.begin("aivoice",false))return false;
   const bool ok=p.putBytes("tracks",next,sizeof next)==sizeof next;p.end();
   if(!ok)return false;
 #endif
-  stateTracks[state]=no;return true;
+  memcpy(stateTracks,next,sizeof stateTracks);return true;
+}
+static bool saveTrack(uint8_t state,uint16_t no) {
+  if(state>=AI_STATES||no>3000)return false;
+  uint16_t next[AI_STATES];memcpy(next,stateTracks,sizeof next);next[state]=no;
+  return saveTracks(next);
 }
 static void readTracks() {
 #ifndef HOST_QA
@@ -90,6 +114,26 @@ static void readTracks() {
 }
 static void speakState(uint8_t state) {
   if(state<AI_STATES && stateTracks[state])audio.requestTrack(stateTracks[state]);
+}
+static void replyButtons(){
+  auto x=buttonList();
+  reply->printf("OK SOUND BUTTONS mode=%s tracks=",x.all?"ALL":"CUSTOM");
+  if(!x.count)reply->print('-');
+  for(unsigned i=0;i<x.count;++i){if(i)reply->print(',');reply->print(x.tracks[i]);}
+  reply->println();
+}
+static bool parseButtons(char *arg,ButtonList &x){
+  char *list=strchr(arg,' ');if(!list)return false;*list++=0;
+  if(strcmp(arg,"ALL")&&strcmp(arg,"CUSTOM"))return false;
+  x.all=!strcmp(arg,"ALL");if(!strcmp(list,"-"))return true;
+  while(*list&&x.count<32){
+    char *comma=strchr(list,',');if(comma)*comma=0;
+    uint32_t id=0;if(!pcm::number(list,10,id)||id<1||id>3000)return false;
+    x.tracks[x.count++]=id;
+    if(!comma)return validButtons(x);
+    list=comma+1;
+  }
+  return false;
 }
 
 void setColor(uint8_t next) {
@@ -201,6 +245,39 @@ static void handleLine(char *line) {
   for (char *p = line; *p; ++p) *p = toupper((unsigned char)*p);
   if(pcm::cmd(line,fromUSB,*reply))return;
   if(toyLan::command(line,fromUSB))return;
+  if(!strcmp(line,"SOUND BUTTONS STATUS")){replyButtons();return;}
+  if(!strncmp(line,"SOUND BUTTONS SET ",18)){
+    ButtonList x;
+    if(!parseButtons(line+18,x))reply->println(F("ERR SOUND buttons expect ALL/CUSTOM and distinct track ids"));
+    else if(!saveButtons(x))reply->println(F("ERR SOUND button list save failed"));
+    else replyButtons();
+    return;
+  }
+  if(strncmp(line,"SOUND DELETE ",13)==0){
+    uint32_t no=0;
+    if(!fromUSB){reply->println(F("ERR SOUND delete requires USB"));return;}
+    if(!pcm::number(line+13,10,no)||no<1||no>3000){reply->println(F("ERR SOUND track 1..3000"));return;}
+    char path[24];pcm::name(path,no);
+    if(!pcm::mounted||pcm::key||pcm::liveKey||!LittleFS.exists(path)){reply->println(F("ERR SOUND missing or busy"));return;}
+    uint16_t before[AI_STATES],next[AI_STATES];
+    memcpy(before,stateTracks,sizeof before);memcpy(next,before,sizeof next);
+    for(auto &n:next)if(n==no)n=0;
+    const ButtonList buttonBefore=buttonList();
+    ButtonList buttonNext;buttonNext.all=buttonBefore.all;
+    for(unsigned i=0;i<buttonBefore.count;++i)if(buttonBefore.tracks[i]!=no)buttonNext.tracks[buttonNext.count++]=buttonBefore.tracks[i];
+    if(!saveTracks(next)){reply->println(F("ERR SOUND binding save failed"));return;}
+    if(!saveButtons(buttonNext)){
+      reply->println(saveTracks(before)?F("ERR SOUND button list save failed"):F("ERR SOUND button list save failed; read bindings"));
+      return;
+    }
+    if(!pcm::erase(no)){
+      const bool restored=saveTracks(before), buttonsRestored=saveButtons(buttonBefore);
+      reply->println(restored&&buttonsRestored?F("ERR SOUND delete failed"):F("ERR SOUND delete failed; read bindings"));
+      return;
+    }
+    if(audio.pending==no){audio.pending=0;audio.manualPending=false;}
+    reply->printf("OK SOUND deleted=%lu\n",(unsigned long)no);return;
+  }
   if(strcmp(line,"SOUND STATE STATUS")==0){
     reply->printf("OK SOUND STATE offline=%u idle=%u running=%u waiting=%u error=%u done=%u\n",
       unsigned(stateTracks[0]),unsigned(stateTracks[1]),unsigned(stateTracks[2]),unsigned(stateTracks[3]),unsigned(stateTracks[4]),unsigned(stateTracks[5]));
@@ -308,14 +385,17 @@ template<class Link,size_t N>
 static void drain(Link &link,LineBuffer<N> &buf,LampReply &out,bool usb) {
   // Bound work to one complete line per channel/turn. Never mix fragments or replies.
   if(buf.length && uint32_t(millis()-buf.lastByte)>2000)buf.discard=true;
-  unsigned budget=256;
+  unsigned budget=N; // still at most one complete line; avoid slicing a PCM frame over several ticks
   while(budget-- && link.available()){
     int b=link.read();if(b<0)break;
     char c=char(b);buf.lastByte=millis();
     if(c=='\r'||c=='\n'){
       if(!buf.discard && !buf.length)continue;
       reply=&out;fromUSB=usb;buf.data[buf.length]=0;
-      if(buf.discard || (buf.length>79 && (!usb||strncmp(buf.data,"NET SET ",8)!=0) && strncmp(buf.data,"PCM DATA ",9)!=0))
+      const bool payload=(usb&&!strncmp(buf.data,"NET SET ",8))||!strncmp(buf.data,"PCM DATA ",9)||
+        !strncmp(buf.data,"PCM LIVE DATA ",14)||!strncmp(buf.data,"SOUND BUTTONS SET ",18)||
+        !strncmp(buf.data,"AUDX GET ",9);
+      if(buf.discard || (buf.length>79 && !payload))
         error(F("ERR LIGHT invalid/overlong line"));
       else handleLine(buf.data);
       lanCfg::wipe(buf.data,sizeof buf.data);buf.length=0;buf.discard=false;
@@ -339,7 +419,7 @@ void setup() {
   pinMode(wire::BUTTON,INPUT_PULLUP);
   pcm::begin();
   readTracks();
-  audio.configure(readCount());
+  readButtons();
 #ifndef HOST_QA
   audio.seed(esp_random());
 #endif

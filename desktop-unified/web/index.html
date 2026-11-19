@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 指示灯 · 统一版</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/unified.css"><script src="/session.js" defer></script><script src="/app.js" defer></script><script src="/audio.js" defer></script><script src="/discovery.js" defer></script></head>
 <body><div class="app">
-<header class="header"><div class="brand"><span class="brand-icon">AI</span><div><strong>AI指示灯 <span class="version-tag">3.0.0</span></strong><span>Nano / ESP32-C3 统一版</span></div></div><div class="header-actions"><span class="local-label"><i></i>本机运行</span><button class="ghost" id="advanced-at-toggle" aria-expanded="false">高级 AT</button><button class="ghost" id="exit">退出程序</button></div></header>
+<header class="header"><div class="brand"><span class="brand-icon">AI</span><div><strong>AI指示灯 <span class="version-tag">3.1.0</span></strong><span>Nano / ESP32-C3 统一版</span></div></div><div class="header-actions"><span class="local-label"><i></i>本机运行</span><button class="ghost" id="advanced-at-toggle" aria-expanded="false">高级 AT</button><button class="ghost" id="exit">退出程序</button></div></header>
 <div id="demo-banner" class="demo" hidden>演示模式 · 下面的状态是模拟数据，不访问小板。</div>
 <main>
 <section class="overview"><div class="overview-heading"><div><div class="eyebrow">DEVICE OVERVIEW</div><h1>小板状态</h1></div><div class="refresh-actions"><span id="updated-at">尚未读取设备</span><label class="toggle"><input id="auto-refresh" type="checkbox" autocomplete="off">自动检查（15 秒）</label><button id="refresh-status" class="secondary" disabled>刷新状态</button></div></div>
@@ -94,22 +94,65 @@ python .\server.py --signal idle --source Claude --session task-1 --ttl 3600</pr
 </section>
 <section id="tab-audio" class="tab-panel panel" hidden>
 <div class="section-head"><div><h2>C3 音频剪辑与播报</h2><p class="section-subtitle">和灯控、AI 跟随共用同一条设备连接。</p></div><div class="aud-header"><span id="aud-device" class="badge">未连接</span><button id="aud-open-lights" class="secondary">灯控连接</button></div></div>
-<div class="aud-section"><h3>准备语音</h3><label for="aud-text">本地语音合成</label><textarea id="aud-text" maxlength="500" rows="2" placeholder="例如：别睡了，表！任务完成了！"></textarea>
-<div class="form-actions"><button id="aud-tts" class="secondary">生成语音</button><label class="button-link secondary aud-choose" for="aud-file">导入音频</label><input id="aud-file" type="file" accept="audio/*,.wav,.mp3,.flac,.m4a" hidden><button id="aud-read" class="secondary" data-device>USB 读回所选编号</button><button id="aud-clear" class="ghost">清除音频</button></div>
-<p id="aud-source" class="hint">音频源最长 5 分钟，每段最长 32 秒。常见录音格式优先用浏览器解码；不支持的格式可选装 FFmpeg。</p></div>
-<div class="aud-section"><h3>剪成多段</h3><canvas id="aud-wave" width="840" height="138" aria-label="波形，可拖动选择片段"></canvas>
-<div class="aud-grid">
+<div class="aud-section"><h3>准备语音</h3><label for="aud-text">播报文字</label><textarea id="aud-text" maxlength="500" rows="2" placeholder="例如：别睡了，表！任务完成了！"></textarea>
+<div class="aud-grid aud-two">
+<label>语音包<select id="aud-voice"><option value="local">Windows 本机语音 · 离线</option><optgroup label="自然神经语音 · 在线">
+<option value="xiaoxiao">晓晓 · 自然女声</option><option value="xiaoyi">晓伊 · 轻快女声</option><option value="yunxi">云希 · 年轻男声</option><option value="yunyang">云扬 · 沉稳男声</option>
+</optgroup></select></label>
+<label>语速<select id="aud-voice-rate"><option value="-16">慢一些（−16%）</option><option value="-8">稍慢（−8%）</option><option value="0" selected>自然（默认）</option><option value="8">稍快（+8%）</option><option value="16">快一些（+16%）</option></select></label></div>
+<p id="aud-voice-note" class="hint">离线生成，文本不会发出本机。</p>
+<div class="form-actions"><button id="aud-speak" class="primary" data-device disabled>直接播报到 C3</button><button id="aud-voice-listen" class="secondary" type="button" disabled>电脑试听文字</button><button id="aud-tts" class="secondary">生成到剪辑区</button></div>
+<div id="aud-voice-preview" class="aud-voice-preview" hidden><audio id="aud-voice-player" controls preload="none" aria-label="电脑文字试听"></audio></div>
+<p id="aud-voice-result" class="hint" role="status">电脑试听使用上面的音色和语速，不需要连接 C3，也不替换剪辑素材。</p>
+<p id="aud-speak-note" class="hint">设备通过局域网连接即可直接播报，不用插 USB。不存录音、不绑定状态、不替换剪辑素材。</p>
+<div class="form-actions"><label class="button-link secondary aud-choose" for="aud-file">导入音频</label><input id="aud-file" type="file" accept="audio/*,.wav,.mp3,.flac,.m4a" hidden><button id="aud-live" class="secondary" data-device disabled>用 C3 实时试听整段</button><button id="aud-clear" class="ghost">清除音频</button></div>
+<p id="aud-source" class="hint">音频源最长 5 分钟，每段最长 32 秒。常见录音格式优先用浏览器解码；不支持的格式可选装 FFmpeg。</p>
+<p id="aud-live-note" class="hint">实时试听通过 C3 喇叭播放，不写 Flash，也不会加入设备录音列表。</p></div>
+<div class="aud-section"><div class="aud-title"><h3>时间线</h3><span id="aud-time">0.000 秒 / 0.000 秒</span></div>
+<canvas id="aud-wave" width="1100" height="166" tabindex="0" aria-label="时间线：顶部标尺定位，波形区拖选"></canvas>
+<p class="hint aud-wave-hint">点波形或标尺定位播放头，拖动波形框选片段。空格播放或暂停。</p>
+<div class="aud-grid aud-two">
 <label>起点（秒）<input id="aud-start" type="number" min="0" step=".001" value="0"></label><label>终点（秒）<input id="aud-end" type="number" min="0" step=".001" value="0"></label>
-<label>设备编号<input id="aud-slot" type="number" min="1" max="3000" value="2"></label><label>绑定状态<select id="aud-role"><option value="">不绑定</option><option value="IDLE">空闲</option><option value="RUNNING">运行</option><option value="WAITING">等待</option><option value="ERROR">报错</option><option value="DONE">完成</option><option value="OFFLINE">离线</option></select></label>
-</div><div class="form-actions"><button id="aud-preview" class="secondary">电脑试听选段</button><button id="aud-add" class="secondary">加入分段列表</button></div>
-<audio id="aud-player" controls hidden></audio><ol id="aud-cuts"></ol><label class="toggle"><input id="aud-auto-play" type="checkbox">推送后试播第一段</label>
-<div class="form-actions"><button id="aud-push" class="primary" data-device>推送分段到 C3</button><button id="aud-play" class="secondary" data-device>播放所选编号</button><button id="aud-stop" class="secondary" data-device>停止设备播报</button></div></div>
-<div class="aud-section"><h3>设备音量与绑定</h3><div class="aud-grid aud-two"><label>音量 0–9<input id="aud-gain" type="number" min="0" max="9" value="7"></label><label>顶部按键曲目数 0–32<input id="aud-count" type="number" min="0" max="32" value="3"></label></div>
-<div class="form-actions"><button id="aud-gain-apply" class="secondary" data-device>应用音量</button><button id="aud-count-apply" class="secondary" data-device>保存按键曲目数</button><button id="aud-fetch" class="secondary" data-device>读取设备配置</button></div>
-<div id="aud-bindings" class="aud-grid"></div><div class="form-actions"><button id="aud-bind" class="secondary" data-device>保存分状态配置</button><span class="hint">0 不播；同状态续期不会重播。</span></div></div>
+</div><div class="form-actions aud-transport" aria-label="电脑试听">
+<button id="aud-transport-play" class="secondary" disabled>播放</button><button id="aud-transport-stop" class="ghost" disabled>回到起点</button>
+<label class="aud-mode-label" for="aud-mode">播放范围</label><select id="aud-mode"><option value="full">整段录音</option><option value="cut" selected>当前选段</option></select>
+<button id="aud-preview" class="secondary" disabled>从选段开头试听</button><button id="aud-live-cut" class="secondary" data-device disabled>用 C3 实时试听选段</button><label class="toggle"><input id="aud-loop" type="checkbox">循环</label>
+</div><p id="aud-preview-status" class="hint aud-preview-status" role="status">电脑试听不会写入设备。</p></div>
+<div class="aud-section"><h3>按任务状态绑定</h3>
+<p class="hint">在时间线选一段，再点对应状态的「绑定选段」。每个状态保留一段，设备编号自动分配。</p>
+<div id="aud-state-cards" class="aud-state-cards"></div>
+<div class="form-actions"><button id="aud-push" class="primary" data-device disabled>写入状态播报到 C3</button><button id="aud-stop" class="ghost" data-device>停止 C3 播报</button></div>
+<p id="aud-bind-hint" class="hint">可以先在电脑上剪辑，连接支持状态播报的 C3 后再写入。</p>
+<progress id="aud-progress" max="100" value="0"></progress><p id="aud-result" role="status" aria-live="polite" class="hint">准备音频不需要设备；写入前在「灯控调试」连接 C3。</p></div>
+<div class="aud-section"><h3>顶部实体按键 · 随机播放</h3>
+<p class="hint">可随机播全部已存录音，也可以只播自己选的片段。至少有两首时不会连续播同一首。</p>
+<div class="form-actions aud-transport">
+<label for="aud-button-mode">按键播放范围</label><select id="aud-button-mode"><option value="ALL">全部已存录音</option><option value="CUSTOM">仅自选歌单</option></select>
+<button id="aud-button-mode-save" class="secondary" data-device disabled>保存按键模式</button></div>
+<p id="aud-button-note" class="hint" role="status">连接 C3 后读取实际按键歌单。</p>
+<div id="aud-button-playlist" class="aud-library-list"></div>
+<div class="form-actions"><button id="aud-button-add" class="secondary">把选段加入自选歌单</button>
+<button id="aud-button-push" class="primary" data-device disabled>写入按键选段到 C3</button></div>
+<ol id="aud-button-cuts"></ol><p id="aud-button-result" class="hint" role="status"></p></div>
+<div class="aud-section"><div class="aud-title"><h3>C3 已存录音</h3><div class="aud-library-actions">
+<button id="aud-lan-read-pair" class="ghost" data-device type="button" hidden title="首次配对需要接原生 USB，之后可拔掉数据线">配对局域网回读</button>
+<button id="aud-library" class="secondary" data-device disabled>刷新设备列表</button></div></div>
+<p id="aud-library-hint" class="hint" role="status">连接 C3 后可读取设备上已有的录音。</p>
+<div id="aud-recording-preview" class="aud-voice-preview" hidden><audio id="aud-recording-player" controls preload="none" aria-label="已存录音的电脑试听"></audio></div>
+<p id="aud-recording-result" class="hint" role="status" hidden></p>
+<div id="aud-library-list" class="aud-library-list"></div></div>
+<div class="aud-section"><h3>C3 默认音量</h3><div class="aud-grid aud-two"><label>音量 0–9<input id="aud-gain" type="number" min="0" max="9" value="7"></label></div>
+<div class="form-actions"><button id="aud-gain-apply" class="secondary" data-device>保存为开机默认音量</button><button id="aud-fetch" class="secondary" data-device>读取设备配置</button></div>
+<p id="aud-gain-note" class="hint" role="status">保存后重启不会恢复为 7 档。仅调档不保存，可先用该档位试听。</p></div>
+<details class="aud-section aud-advanced"><summary>高级 · 按编号管理语音</summary>
+<p class="hint">给实体按键准备录音、读回已有语音，或手动调整旧配置时使用。这里的普通录音不会自动绑定任务状态。</p>
+<div class="aud-grid aud-two"><label>设备编号<input id="aud-slot" type="number" min="1" max="3000" value="2"></label></div>
+<div class="form-actions"><button id="aud-add" class="secondary">把选段加入编号队列</button><button id="aud-read" class="secondary" data-device>USB 读回此编号</button><button id="aud-play" class="secondary" data-device>在 C3 试播此编号</button></div>
+<ol id="aud-cuts"></ol><label class="toggle"><input id="aud-auto-play" type="checkbox">写入后在 C3 试播第一段</label>
+<div class="form-actions"><button id="aud-manual-push" class="secondary" data-device>推送编号队列到 C3</button></div>
+<div id="aud-bindings" class="aud-grid"></div><div class="form-actions"><button id="aud-bind" class="secondary" data-device>保存手动编号绑定</button><span class="hint">先读取设备配置，0 表示不播；同状态续期不会重播。</span></div></details>
 <details class="aud-section"><summary>C3 首次 Wi‑Fi 配置（USB）</summary><label>2.4 GHz Wi‑Fi 名称<input id="aud-ssid" maxlength="32" autocomplete="off"></label><div class="discover-actions"><button class="secondary" id="discover-c3-wifi">搜索附近 Wi-Fi</button><select id="discover-c3-choices" aria-label="附近 Wi-Fi" hidden></select><span id="discover-c3-hint" class="hint" role="status"></span></div><label>Wi‑Fi 密码<input id="aud-password" type="password" maxlength="64" autocomplete="new-password"></label>
 <div class="form-actions"><button id="aud-wifi" class="secondary" data-device>通过 USB 配 Wi‑Fi</button><button id="aud-net" class="secondary" data-device>查询 C3 Wi‑Fi</button></div></details>
-<progress id="aud-progress" max="100" value="0"></progress><p id="aud-result" role="status" aria-live="polite" class="hint">准备音频不需要设备；推送前在「灯控调试」连接 C3。</p>
 </section>
 
 <section id="tab-firmware" class="tab-panel panel" hidden><div class="section-head"><div><h2>固件升级入口</h2><p class="section-subtitle">通过普通 AT 进入 Recovery，无需短接 ES/DF。</p></div><span id="upgrade-badge" class="badge">待检测</span></div>
@@ -118,6 +161,6 @@ python .\server.py --signal idle --source Claude --session task-1 --ttl 3600</pr
 <section class="panel status-panel" aria-live="polite"><div class="status-title"><i class="dot" id="status-dot"></i><strong id="stage">未连接</strong><span id="progress-count"></span><button id="stop" class="text-button danger" hidden>停止</button></div><p id="message">选择串口，读取小板当前状态。</p><progress id="progress" max="1" value="0" hidden aria-label="操作进度"></progress><div id="ui-error" class="error" role="alert" hidden></div><p id="status-warnings" class="warning-text" hidden></p></section>
 </div></div>
 <details class="panel log-panel"><summary><span>通信记录 <small>本次会话 · 密码隐藏</small></span><span id="log-count">0 条</span></summary><div class="log-tools"><span>自动状态刷新只记录异常</span><button id="export" class="text-button">导出记录</button></div><div id="logs" class="logs" role="log" aria-live="off"><div class="empty-log">连接后显示命令和回复。</div></div></details>
-</main><footer><span>AI 指示灯 3.0.0</span><span>设备状态来自实际回复 · 未确认的联网状态单独标明</span></footer></div>
+</main><footer><span>AI 指示灯 3.1.0</span><span>设备状态来自实际回复 · 未确认的联网状态单独标明</span></footer></div>
 <dialog id="action-dialog"><form method="dialog"><div class="eyebrow">设备操作</div><h2 id="dialog-title"></h2><p id="dialog-description"></p><div class="form-actions"><button value="cancel" class="secondary">取消</button><button id="dialog-confirm" value="confirm" class="primary">继续</button></div></form></dialog>
 </body></html>

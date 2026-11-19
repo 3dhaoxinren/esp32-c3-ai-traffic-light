@@ -10,6 +10,6 @@ if(Test-Path -LiteralPath (Join-Path $out 'AI-Lamp')){throw 'Choose a fresh outp
 New-Item -ItemType Directory -Path $out,$work -Force | Out-Null
 Push-Location -LiteralPath $src
 try{
-  python -m PyInstaller --noconfirm --onedir --windowed --noupx --name AI-Lamp --icon "$src/icons/green.ico" --version-file "$src/windows-version.txt" --add-data "${src}/web:web" --add-data "${src}/web-local:web-local" --add-data "${src}/icons:icons" --distpath $out --workpath $work --specpath $work "$src/server.py"
+  python -m PyInstaller --noconfirm --onedir --windowed --noupx --name AI-Lamp --additional-hooks-dir "$src/hooks" --icon "$src/icons/green.ico" --version-file "$src/windows-version.txt" --add-data "${src}/web:web" --add-data "${src}/web-local:web-local" --add-data "${src}/icons:icons" --distpath $out --workpath $work --specpath $work "$src/server.py"
   if($LASTEXITCODE){exit $LASTEXITCODE}
 } finally {Pop-Location}

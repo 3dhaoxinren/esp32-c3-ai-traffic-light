@@ -33,7 +33,7 @@ class AppServer(ThreadingHTTPServer):
         if local_only:
             self.controller._set(app_version='2.6.0', message='Nano 本地版：选择 USB 灯板')
         else:
-            self.controller._set(app_version='3.0.0')
+            self.controller._set(app_version='3.1.0')
         self.lights = LightController(self.controller.log, demo=demo, local_only=local_only)
         self.connection_lock = threading.RLock()
         self.ai = AiCoordinator(self.lights, self.connection_lock, self.controller.log, demo=demo, preferences=preferences, local_only=local_only)
@@ -53,7 +53,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
-    def reply(self, status, data, mime="application/json; charset=utf-8"):
+    def reply(self, status, data, mime="application/json; charset=utf-8",extra_headers=()):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8") if isinstance(data, (dict, list)) else data
         self.send_response(status)
         self.send_header("Content-Type", mime)
@@ -61,6 +61,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        for header,value in extra_headers:self.send_header(header,value)
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
         self.end_headers()
         try:
@@ -151,7 +152,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= (16384 if self.path in ('/api/ai_ack_errors','/api/audio_job') else 4096):
+            if not 0 < length <= (16384 if self.path in ('/api/ai_ack_errors','/api/audio_job','/api/audio_voice_preview') else 4096):
                 raise ValueError()
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
@@ -172,9 +173,18 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/api/audio_job":
                 if self.server.local_only:raise DeviceError("此模式不含 C3 音频")
                 self.server.audio.start(data.get('op'),data)
+            elif self.path == "/api/audio_cancel":
+                self.server.audio.cancel_live()
             elif self.path == "/api/audio_preview":
                 if self.server.local_only:raise DeviceError("此模式不含 C3 音频")
                 self.reply(200,self.server.audio.preview(data),'audio/wav')
+                return
+            elif self.path == "/api/audio_voice_preview":
+                self.reply(200,self.server.audio.preview_voice(data),'audio/wav')
+                return
+            elif self.path == "/api/audio_recording_preview":
+                audio,mode=self.server.audio.preview_recording(data)
+                self.reply(200,audio,'audio/wav',(('X-C3-Readback',mode),))
                 return
             elif self.path == "/api/ai_event":
                 if data.get("source") == "Codex-local":

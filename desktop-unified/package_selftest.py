@@ -25,14 +25,14 @@ def run(AppServer,out):
     try:
         for path in ('/','/app.js','/audio.js','/discovery.js','/style.css','/unified.css','/Nano_HLK_M30.ino'):
             assert len(get(path))>100,path
-        assert b'3.0.0' in get('/') and b'id="tab-nano"' not in get('/')
+        assert b'3.1.0' in get('/') and b'id="tab-nano"' not in get('/')
         assert b'id="advanced-at-toggle"' in get('/') and b'id="discover-lan"' in get('/')
         # Unique window class even when the user's real tray application is running.
         key='AILamp.WinPortableCheck.'+uuid.uuid4().hex
         desktop_tray.window_class=lambda:key
         t=DesktopTray(s);t.start()
         assert t.hwnd is not None and t.hwnd!=0
-        state=json.loads(get('/api/state'));assert state['app_version']=='3.0.0'
+        state=json.loads(get('/api/state'));assert state['app_version']=='3.1.0'
         seed=bytes(range(48))*180
         temp=io.BytesIO()
         with wave.open(temp,'wb') as f:
@@ -47,10 +47,33 @@ def run(AppServer,out):
         assert not q['error'] and q['source']['frames']==len(seed)//2
         p=io.BytesIO(get('/api/audio_preview',{'source':q['source']['id'],'start':16,'end':257,'slot':2}))
         with wave.open(p,'rb') as f:assert f.readframes(241)==seed[32:514]
+        import audio_desk, edge_tts, miniaudio
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        from tempfile import TemporaryDirectory
+        from lan_readback import KeyStore,key_id
+        assert b'id="aud-voice-listen"' in get('/') and b'id="aud-lan-read-pair"' in get('/')
+        assert callable(edge_tts.Communicate)
+        decoded=miniaudio.decode(temp.getvalue(),output_format=miniaudio.SampleFormat.SIGNED16,nchannels=1,sample_rate=16000)
+        assert len(decoded.samples)==len(seed)//2
+        key=bytes(range(32));nonce=b'\x01'*12
+        crypto=AESGCM(key)
+        assert crypto.decrypt(nonce,crypto.encrypt(nonce,seed,b'package-check'),b'package-check')==seed
+        with TemporaryDirectory() as folder:
+            store=KeyStore(folder);store.save(key)
+            assert store.load(key_id(key))==key
+        before=json.loads(get('/api/audio'))
+        synth=audio_desk.synthesize
+        try:
+            audio_desk.synthesize=lambda text,profile,rate:(seed,'offline-fixture')
+            voice=get('/api/audio_voice_preview',{'text':'QA','profile':'local','rate':0})
+            with wave.open(io.BytesIO(voice),'rb') as w:assert w.readframes(w.getnframes())==seed
+        finally:audio_desk.synthesize=synth
+        assert json.loads(get('/api/audio'))==before
         d=json.loads(get('/api/discover'));assert not d['busy']
-        report=dict(version='3.0.0',packaged=bool(getattr(__import__('sys'),'frozen',False)),
+        report=dict(version='3.1.0',packaged=bool(getattr(__import__('sys'),'frozen',False)),
                     localhost_assets=True,win32_tray_registered=True,demo_audio_import_and_cut=True,
-                    discovery_ui_available=True,nano_wiring_page_absent=True,device_untouched=True)
+                    discovery_ui_available=True,nano_wiring_page_absent=True,device_untouched=True,
+                    text_audition_unchanged_source=True,encrypted_lan_dependencies=True,voice_packages_available=True)
         Path(out).write_text(json.dumps(report,sort_keys=True,indent=2)+'\n',encoding='utf8')
     finally:
         if t:t.stop()
