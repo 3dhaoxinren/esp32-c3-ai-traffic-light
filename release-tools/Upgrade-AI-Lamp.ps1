@@ -8,7 +8,7 @@ param(
     [switch]$NoRegistry
 )
 $ErrorActionPreference = 'Stop'
-$version = '3.1.0'
+$version = '3.1.3'
 $components = @('AI-Lamp.exe','_internal','licenses','LICENSE.txt','THIRD-PARTY-NOTICES.txt','使用说明.txt','package-manifest.json')
 $legacyHash = 'AD47DFB624B43215EF82C2EBF6F7E3073900735BF3989ABF3B9F758C4F77504A'
 $reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
@@ -59,7 +59,7 @@ function Is-Unified([string]$path) {
     if ([IO.Path]::GetFileName($path) -ne 'AI-Lamp.exe' -or !(Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
     Assert-NotRedirected $path
     $v=(Get-Item -LiteralPath $path).VersionInfo
-    return $v.ProductName -eq 'AI Lamp Unified' -and $v.ProductVersion -match '^3\.(0|1)\.'
+    return $v.ProductName -eq 'AI Lamp Unified' -and $v.ProductVersion -match '^3\.(0|1)\.[0-9]+$'
 }
 function Is-Legacy([string]$path) {
     if ([IO.Path]::GetFileName($path) -ne 'AI指示灯.exe' -or !(Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
@@ -110,8 +110,11 @@ foreach ($entry in $manifest.files) {
         throw "更新包文件校验失败：$rel"
     }
 }
+$sourceExe=Child $source 'AI-Lamp.exe'
 if (!$seen.ContainsKey('AI-Lamp.exe') -or !$seen.ContainsKey('_internal/web/index.html') -or
-    !(Is-Unified (Child $source 'AI-Lamp.exe'))) { throw 'Windows 程序不完整。' }
+    !(Is-Unified $sourceExe) -or (Get-Item -LiteralPath $sourceExe).VersionInfo.ProductVersion -ne $version) {
+    throw 'Windows 程序不完整或版本不符。'
+}
 
 $dest=Canonical $InstallDir
 if ($dest.Length -lt 7 -or $dest -eq $source -or $dest.StartsWith($source+'\',[StringComparison]::OrdinalIgnoreCase) -or
@@ -123,6 +126,9 @@ if ($dest -eq $profileRoot -or $dest.StartsWith($profileRoot+'\',[StringComparis
 Assert-NotRedirected $dest
 $destExe=Child $dest 'AI-Lamp.exe'
 $haveUnified=Is-Unified $destExe
+if ($haveUnified -and [version]((Get-Item -LiteralPath $destExe).VersionInfo.ProductVersion) -gt [version]$version) {
+    throw '安装目录已有更新版本，未降级。'
+}
 if ((Test-Path -LiteralPath $dest) -and !$haveUnified) {
     if (!(Test-Path -LiteralPath $dest -PathType Container) -or @(Get-ChildItem -LiteralPath $dest -Force).Count) {
         throw '目标目录已有别的内容，未改动。请选择空目录或原统一版目录。'
@@ -166,6 +172,7 @@ if (Test-Path -LiteralPath $epFile -PathType Leaf) {
                 if ($safe) {
                     $snap=Command-Snapshot $obj
                     if ($snap.state.app_version -match '^(2\.7\.[0-9]+|3\.[01]\.[0-9]+)$' -and $snap.state.desktop.tray) {
+                        if ([version]$snap.state.app_version -gt [version]$version) { throw '已有更新版本正在运行，未降级。' }
                         $ep=$obj;Ensure-Idle $snap
                         if (Is-Legacy $pp) { $known[$pp]=$true }
                     }
@@ -198,7 +205,11 @@ if ($oldRun) {
 Write-Host "新版目录：$dest"
 Write-Host "识别到的 2.7.0 旧程序：$($known.Count)；旧版快捷方式：$($shortcuts.Count)"
 if ($PlanOnly) { return }
+$launchArgs=@('--autostart','--no-browser')
 if ($ep) {
+    if ($snap.state.app_version -match '^3\.' -and $snap.state.ai.enabled -eq $false) {
+        $launchArgs+='--keep-follow-paused'
+    }
     $audio=$null
     try { $audio=Invoke-RestMethod -TimeoutSec 3 -Uri ($ep.url+'/api/audio') -Headers $snap.headers } catch {
         if ($snap.state.app_version -notmatch '^2\.7\.') { throw '无法检查旧版音频工作区，请先自行保存并退出旧版。' }
@@ -256,7 +267,7 @@ try {
     }
     @{oldAutostart=$oldRun;autostartMigrated=$didRun;files=$moved} | ConvertTo-Json -Depth 6 |
         Set-Content -LiteralPath (Child $backup '回退记录.json') -Encoding UTF8
-    if (!$NoLaunch) { Start-Process -FilePath $destExe -ArgumentList @('--autostart','--no-browser') -WindowStyle Hidden }
+    if (!$NoLaunch) { Start-Process -FilePath $destExe -ArgumentList $launchArgs -WindowStyle Hidden }
 } catch {
     if ($didRun) { Set-ItemProperty -LiteralPath $reg -Name $regName -Value $oldRun }
     for ($i=$new.Count-1;$i -ge 0;--$i) {

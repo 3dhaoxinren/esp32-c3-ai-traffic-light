@@ -4,11 +4,13 @@ from ctypes import wintypes
 import hashlib
 import os
 from pathlib import Path
+import re
 import sys
 import threading
 import time
 import webbrowser
 from ai_status import visible_errors
+from core import DeviceError
 
 STATE_NAMES = {"idle": "空闲 / 完成", "running": "执行中", "waiting": "等待确认", "error": "异常 / 报错", "offline": "状态失效"}
 COLOR_NAMES = {"RED": "红灯", "YELLOW": "黄灯", "GREEN": "绿灯", "OFF": "熄灯"}
@@ -24,6 +26,14 @@ def timer_api():
 
 OPEN_MESSAGE = 0x8000 + 20
 CALLBACK_MESSAGE = 0x8000 + 21
+FIRST_SERIAL_COMMAND = 100
+COM_PORT = re.compile(r"COM[1-9][0-9]{0,4}")
+
+
+def connected_serial_port(light):
+    if light.get("connected") and light.get("transport") == "serial":
+        return light["endpoint"].partition(" ")[0].upper()
+    return ""
 
 
 def tray_status(light, ai):
@@ -112,6 +122,65 @@ class DesktopTray:
             win32gui.Shell_NotifyIcon(win32gui.NIM_ADD if add else win32gui.NIM_MODIFY, data)
             self.last_status = (icon, tooltip)
 
+    def _serial_unavailable(self, light):
+        controller = self.server.controller
+        if controller.demo:
+            return "演示模式不访问 USB"
+        module = controller.snapshot()
+        if module["connected"] or module["busy"]:
+            return "请先释放高级 AT 连接"
+        if light["busy"] or self.server.audio.snapshot()["busy"]:
+            return "设备或音频操作进行中，请稍后重试"
+        return ""
+
+    def _append_serial_menu(self, menu, light):
+        import win32con as c
+        import win32gui as g
+        reason = self._serial_unavailable(light)
+        try:
+            ports = {
+                row["device"]: row.get("description") or ""
+                for row in self.server.controller.ports()
+                if COM_PORT.fullmatch(row["device"])
+            } if not self.server.controller.demo else {}
+        except OSError:
+            ports = {}
+            reason = reason or "无法读取 USB 串口，请重新打开菜单"
+        active = connected_serial_port(light)
+        commands = {}
+        popup = g.CreatePopupMenu()
+        try:
+            if reason or not ports:
+                g.AppendMenu(popup, c.MF_STRING | c.MF_GRAYED, 0, reason or "未发现 USB 串口")
+            if ports:
+                if reason:
+                    g.AppendMenu(popup, c.MF_SEPARATOR, 0, "")
+                for command, port in enumerate(sorted(ports, key=lambda name: int(name[3:])), FIRST_SERIAL_COMMAND):
+                    current = port.upper() == active
+                    description = re.sub(r"\s*\(" + port + r"\)$", "", ports[port], flags=re.IGNORECASE)
+                    label = port + (" · " + description[:60] if description else "")
+                    if current:
+                        label += "（已连接）"
+                    flags = c.MF_STRING | (c.MF_CHECKED if current else 0) | (c.MF_GRAYED if reason else 0)
+                    g.AppendMenu(popup, flags, command, label.replace("&", "&&"))
+                    commands[command] = port
+            g.AppendMenu(menu, c.MF_POPUP, popup, "切换 USB 串口")
+        except Exception:
+            g.DestroyMenu(popup)
+            raise
+        return commands
+
+    def _switch_serial(self, port):
+        with self.server.connection_lock:
+            light = self.server.lights.snapshot()
+            if port.upper() == connected_serial_port(light):
+                return  # Do not reopen or reset a board that's already connected.
+            reason = self._serial_unavailable(light)
+            if reason:
+                raise DeviceError(reason)
+            self.server.startup.manual_serial_switch(port)
+            self.server.ai.reset_link_state()
+
     def _menu(self):
         import win32con as c
         import win32gui as g
@@ -123,6 +192,7 @@ class DesktopTray:
             g.AppendMenu(menu, c.MF_SEPARATOR, 0, "")
             g.AppendMenu(menu, c.MF_STRING, 1, "打开AI指示灯")
             g.AppendMenu(menu, c.MF_STRING, 2, "灯控调试")
+            serial_commands = self._append_serial_menu(menu, light)
             g.AppendMenu(menu, c.MF_STRING, 6, "C3 音频剪辑与播报")
             flags = c.MF_STRING | (0 if light["connected"] and not light["busy"] else c.MF_GRAYED)
             g.AppendMenu(menu, flags, 3, "暂停并熄灯" if ai["enabled"] else "开启自动跟随")
@@ -150,6 +220,9 @@ class DesktopTray:
                 # Use identities captured when this menu opened; a new failure
                 # arriving while it is open must remain unacknowledged.
                 self.server.ai.acknowledge_errors(errors)
+                self._update()
+            elif selected in serial_commands:
+                self._switch_serial(serial_commands[selected])
                 self._update()
         finally:
             g.DestroyMenu(menu)

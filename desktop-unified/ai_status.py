@@ -293,12 +293,18 @@ class AiCoordinator:
         self.log("AI 状态自动跟随已开启" if enabled else "AI 跟随已暂停，状态灯将熄灭")
 
     def detach(self):
-        self.done_mode=False
         self.enabled = False
+        self.reset_link_state()
+
+    def reset_link_state(self):
+        # Drop old-device previews, pending OFF and cached writes, not the
+        # user's automatic-follow toggle.
+        self.done_mode=False
         self.preview = None
         self.pending_off = False
         self.manual_off = False
         self.applied = ""
+        self.screen_applied = None
 
     def demonstrate(self, state):
         if not isinstance(state, str) or state not in PRIORITY:

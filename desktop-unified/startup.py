@@ -11,10 +11,13 @@ import time
 
 from serial.tools import list_ports
 from core import DeviceError, validate_host
+from serial_notifications import WindowsSerialNotifications
 
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_NAME = "HLKM30AIIndicator"
+CH340 = (0x1a86,0x7523)
+CH340_LOCATION = re.compile(r"\d+(?:-\d+)+(?:\.\d+)*(?::x\.0)?")
 
 
 def validate_target(value):
@@ -63,11 +66,12 @@ def same_usb_location(expected,actual):
                 re.fullmatch(re.escape(expected)+r":x\.\d+",actual))
 
 
-def resolve_target(target, ports):
+def resolve_target(target, ports, roam_usb=False):
     """Resolve the last confirmed binding without opening or probing other ports."""
     if target["transport"] == "tcp":
         return dict(target)
     candidates = [p for p in ports if p.vid == target["vid"] and p.pid == target["pid"]]
+    same_chip = candidates
     if target["serial_number"]:
         candidates = [p for p in candidates if p.serial_number == target["serial_number"]]
         if len(candidates) == 1:
@@ -77,8 +81,17 @@ def resolve_target(target, ports):
     if target["location"]:
         # CH340 boards commonly omit unique serial numbers. Windows' USB
         # topology differentiates two such adapters even when COM names change.
-        candidates = [p for p in candidates if same_usb_location(target["location"],p.location)]
+        ch340_plain = re.fullmatch(r"(\d+(?:-\d+)+(?:\.\d+)*):x\.0", target["location"]) if (
+            target["vid"],target["pid"]) == CH340 else None
+        candidates = [p for p in candidates if same_usb_location(target["location"],p.location) or (
+            ch340_plain and p.device == target["port"] and p.location == ch340_plain[1])]
         if not candidates:
+            if (roam_usb and not target["serial_number"] and (target["vid"],target["pid"])==CH340
+                    and CH340_LOCATION.fullmatch(target["location"])):
+                if len(same_chip)>1:
+                    raise DeviceError("换 USB 口后发现多个 CH340，请手动选择 Nano；不会自动尝试。")
+                if len(same_chip)==1 and not same_chip[0].serial_number and CH340_LOCATION.fullmatch(same_chip[0].location or ""):
+                    return dict(transport="serial",port=same_chip[0].device)
             raise DeviceError("等待灯板原 USB 接口 " + target["location"] + "；换接口后请手动连接一次")
     else:
         # Older profiles without a topology binding may use only the explicitly
@@ -92,13 +105,15 @@ def resolve_target(target, ports):
 class ConnectionPreferences:
     def __init__(self, path=None):
         self.path = Path(path) if path else Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "HLK-M30/connection-settings.json"
-        self.value = dict(auto_connect=False, auto_follow=True, target=None)
+        self.value = dict(auto_connect=False, auto_follow=True, roam_usb=False, target=None)
         self.warning = ""
         try:
             value = json.loads(self.path.read_text(encoding="utf-8"))
-            if not isinstance(value, dict) or any(type(value.get(k)) is not bool for k in ("auto_connect", "auto_follow")):
+            if (not isinstance(value,dict) or any(type(value.get(k)) is not bool for k in ("auto_connect","auto_follow"))
+                    or type(value.get("roam_usb",False)) is not bool):
                 raise ValueError("Invalid preferences")
-            self.value = dict(auto_connect=value["auto_connect"], auto_follow=value["auto_follow"], target=validate_target(value.get("target")))
+            self.value = dict(auto_connect=value["auto_connect"], auto_follow=value["auto_follow"],
+                              roam_usb=value.get("roam_usb",False), target=validate_target(value.get("target")))
         except FileNotFoundError:
             pass
         except (OSError, ValueError, TypeError, DeviceError):
@@ -109,7 +124,7 @@ class ConnectionPreferences:
 
     def save(self, **changes):
         value = {**self.value, **changes}
-        for key in ("auto_connect", "auto_follow"):
+        for key in ("auto_connect", "auto_follow", "roam_usb"):
             if type(value[key]) is not bool:
                 raise DeviceError("自动连接开关必须为布尔值")
         value["target"] = validate_target(value["target"])
@@ -182,34 +197,49 @@ class AutoConnector:
         self.pending = None
         self.attempts = 0
         self.next_try = 0
+        self.serial_requested = True  # One initial check, not a periodic scan.
+        self.serial_was_connected = False
+        self.serial_due = None
+        self.serial_removed = False
+        self.serial_events = set()
+        self.serial_events_lock = threading.Lock()
+        self.serial_notifications = None
+        self.serial_notice_warning = ""
+        self.serial_checks = 0
+        self.skip_first_auto_follow = False
         self.message = "尚未启用自动连接"
 
     def snapshot(self):
         with self.server.connection_lock:
             return {**self.preferences.snapshot(), "autostart": self.registration.snapshot(),
                     "suspended": self.suspended, "attempts": self.attempts,
-                    "message": self.message, "warning": self.preferences.warning,
+                    "message": self.message, "warning": self.preferences.warning or self.serial_notice_warning,
+                    "serial_notifications": self.serial_notifications is not None,
+                    "serial_checks": self.serial_checks,
                     "retry_in": max(0, int(self.next_try - self.clock()))}
 
     def configure(self, data):
         if self.server.controller.demo:
             raise DeviceError("演示模式不修改真实启动和连接设置")
-        if set(data) != {"autostart", "auto_connect", "auto_follow"} or any(type(v) is not bool for v in data.values()):
-            raise DeviceError("请提交三个布尔开关")
+        required={"autostart","auto_connect","auto_follow"}
+        if not required<=set(data)<=required|{"roam_usb"} or any(type(v) is not bool for v in data.values()):
+            raise DeviceError("启动设置开关必须为布尔值")
         previous = self.preferences.snapshot()
-        self.preferences.save(auto_connect=data["auto_connect"], auto_follow=data["auto_follow"])
+        self.preferences.save(auto_connect=data["auto_connect"], auto_follow=data["auto_follow"],
+                              roam_usb=data.get("roam_usb",previous["roam_usb"]))
         try:
             self.registration.set_enabled(data["autostart"])
         except DeviceError:
             self.preferences.save(**previous)
             raise
         self.suspended, self.next_try, self.attempts = False, 0, 0
+        self.serial_requested = True
         self.message = "设置已保存；等待连接上次确认的灯板" if data["auto_connect"] else "已关闭自动连接"
 
     def manual_started(self, action, data):
         if action == "light_connect":
             try:
-                target = capture_target(data, self.ports())
+                target = capture_target(data, self.ports() if data.get("transport") == "serial" else ())
             except DeviceError as exc:
                 self.suspend(str(exc))
                 return
@@ -218,8 +248,19 @@ class AutoConnector:
         elif action in ("light_disconnect", "connect"):
             self.suspend("已暂停自动重连；重新启动程序或点击恢复重连后继续")
 
+    def manual_serial_switch(self, port):
+        # Called with connection_lock held. Capture the target before opening it;
+        # step() saves it only after a valid lamp reply, like a normal manual connect.
+        data = {"transport": "serial", "port": port}
+        target = capture_target(data, self.ports())
+        self.server.lights.start("light_switch_serial", data)
+        self.pending = (target, False)
+        self.suspended = False
+        self.message = "正在切换到 " + port
+
     def suspend(self, message):
         self.suspended, self.pending, self.message = True, None, message
+        self.serial_was_connected = False
 
     def resume(self):
         if self.server.controller.demo:
@@ -227,7 +268,58 @@ class AutoConnector:
         if not self.preferences.value["auto_connect"] or not self.preferences.value["target"]:
             raise DeviceError("请先手动连接一次灯板，并保存开启自动连接")
         self.suspended, self.next_try, self.attempts = False, 0, 0
+        self.serial_requested = True
         self.message = "正在恢复自动连接"
+
+    def notify_serial_change(self, identity, removed):
+        with self.serial_events_lock:
+            self.serial_events.add((identity, removed))
+
+    def _serial_ports(self, target, light):
+        """Consume a startup/manual request, a connection loss, or a PnP event."""
+        identity = target["vid"], target["pid"]
+        with self.serial_events_lock:
+            events = self.serial_events or ()
+            if events:
+                self.serial_events = set()
+        for observed, removed in events:
+            if identity == observed or identity == (None, None):
+                self.serial_due = self.clock() + .35  # Coalesce removals/arrivals and let PnP settle.
+                self.serial_removed |= removed
+        active = (light["connected"] and light.get("transport") == "serial"
+                  and light.get("endpoint", "").startswith(target["port"] + " "))
+        if active:
+            self.serial_requested = False
+            self.serial_was_connected = True
+        elif light["connected"]:
+            return None  # Never replace a different, live connection.
+        elif self.serial_was_connected:
+            self.serial_was_connected = False
+            self.serial_requested = True  # One check after a real link/heartbeat failure.
+        due = self.serial_due
+        if (due is not None and self.clock() < due) or (due is None and not self.serial_requested):
+            return None
+        # A live recording can hold a shared USB connection while it finishes.
+        if active and hasattr(self.server, "audio") and self.server.audio.snapshot()["busy"]:
+            return None
+        self.serial_due, self.serial_requested = None, False
+        removed, self.serial_removed = self.serial_removed, False
+        self.serial_checks += 1
+        ports = self.ports()
+        if not active:
+            return ports
+        try:
+            # Roaming is allowed after a loss, not when identifying an open handle.
+            present = resolve_target(target, ports)["port"] == target["port"]
+        except DeviceError:
+            present = False
+        if present and (not removed or self.server.lights.serial_handle_alive()):
+            return None
+        self.server.lights._close()
+        self.serial_was_connected = False
+        self.server.ai.reset_link_state()
+        self.message = "灯板 USB 已断开，等待重新连接"
+        return ports
 
     def step(self):
         with self.server.connection_lock:
@@ -248,31 +340,44 @@ class AutoConnector:
                         return
                     self.attempts = 0
                     self.message = "已连接并记住灯板；下次启动可自动连接"
-                    if automatic and self.preferences.value["auto_connect"] and self.preferences.value["auto_follow"]:
-                        self.server.ai.set_enabled(True)
-                        self.message = "已自动连接灯板并开启 AI 跟随"
+                    if automatic:
+                        skip_follow, self.skip_first_auto_follow = self.skip_first_auto_follow, False
+                        if not skip_follow and self.preferences.value["auto_connect"] and self.preferences.value["auto_follow"]:
+                            self.server.ai.set_enabled(True)
+                            self.message = "已自动连接灯板并开启 AI 跟随"
                 else:
                     self.message = light.get("message", "连接失败，等待重试")
                     if not automatic:
                         self.suspended = True  # Never reconnect an old target after a failed manual switch.
             settings = self.preferences.value
-            if light["connected"] or self.suspended or not settings["auto_connect"]:
+            if self.suspended or not settings["auto_connect"]:
                 return
-            if not settings["target"]:
+            target = settings["target"]
+            if not target:
                 self.message = "请先在灯控调试中手动成功连接一次，自动记住设备"
                 return
-            module = self.server.controller.snapshot()
-            if module["busy"] or module["connected"] or self.clock() < self.next_try:
-                return
-            self.attempts += 1
-            delay = (2, 5, 10, 30)[min(self.attempts - 1, 3)]
-            self.next_try = self.clock() + delay
-            try:
-                if getattr(self.server, 'local_only', False) and settings['target']['transport'] != 'serial':
-                    self.suspend("Nano 本地版仅使用 USB；请先手动连接一次 Nano 更新设备记忆")
+            if not light["connected"]:
+                module = self.server.controller.snapshot()
+                if module["busy"] or module["connected"]:
                     return
-                data = resolve_target(settings["target"], self.ports())
-                target = capture_target(data, self.ports())
+            try:
+                if target["transport"] == "serial":
+                    ports = self._serial_ports(target, light)
+                    if ports is None:
+                        return
+                    self.attempts += 1
+                    data = resolve_target(target, ports, settings["roam_usb"])
+                    target = capture_target(data, ports)
+                else:
+                    if light["connected"] or self.clock() < self.next_try:
+                        return
+                    if getattr(self.server, 'local_only', False):
+                        self.suspend("Nano 本地版仅使用 USB；请先手动连接一次 Nano 更新设备记忆")
+                        return
+                    self.attempts += 1
+                    delay = (2, 5, 10, 30)[min(self.attempts - 1, 3)]
+                    self.next_try = self.clock() + delay
+                    data = dict(target)
                 self.server.lights.start("light_connect", data)
                 self.pending = (target, True)
                 self.message = "正在自动连接灯板（第 " + str(self.attempts) + " 次）"
@@ -282,6 +387,12 @@ class AutoConnector:
     def start(self):
         if self.server.controller.demo:
             return
+        if os.name == "nt":
+            try:
+                self.serial_notifications = WindowsSerialNotifications(self.notify_serial_change)
+            except (OSError, AttributeError) as exc:
+                self.serial_notice_warning = "未能注册 Windows 串口通知；插拔后请点恢复自动重连或从托盘选择。"
+                self.server.controller.log(self.serial_notice_warning + " " + str(exc), "warn")
         self.worker = threading.Thread(target=self._loop, name="lamp-auto-connect", daemon=True)
         self.worker.start()
 
@@ -299,3 +410,10 @@ class AutoConnector:
         self.stop_event.set()
         if self.worker:
             self.worker.join(4)
+        if self.serial_notifications:
+            try:
+                self.serial_notifications.close()
+            except OSError as exc:
+                self.server.controller.log("注销串口通知失败：" + str(exc), "warn")
+            else:
+                self.serial_notifications = None

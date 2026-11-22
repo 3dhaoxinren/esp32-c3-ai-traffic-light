@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 指示灯 · 统一版</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/unified.css"><script src="/session.js" defer></script><script src="/app.js" defer></script><script src="/audio.js" defer></script><script src="/discovery.js" defer></script></head>
 <body><div class="app">
-<header class="header"><div class="brand"><span class="brand-icon">AI</span><div><strong>AI指示灯 <span class="version-tag">3.1.0</span></strong><span>Nano / ESP32-C3 统一版</span></div></div><div class="header-actions"><span class="local-label"><i></i>本机运行</span><button class="ghost" id="advanced-at-toggle" aria-expanded="false">高级 AT</button><button class="ghost" id="exit">退出程序</button></div></header>
+<header class="header"><div class="brand"><span class="brand-icon">AI</span><div><strong>AI指示灯 <span class="version-tag">3.1.3</span></strong><span>Nano / ESP32-C3 统一版</span></div></div><div class="header-actions"><span class="local-label"><i></i>本机运行</span><button class="ghost" id="advanced-at-toggle" aria-expanded="false">高级 AT</button><button class="ghost" id="exit">退出程序</button></div></header>
 <div id="demo-banner" class="demo" hidden>演示模式 · 下面的状态是模拟数据，不访问小板。</div>
 <main>
 <section class="overview"><div class="overview-heading"><div><div class="eyebrow">DEVICE OVERVIEW</div><h1>小板状态</h1></div><div class="refresh-actions"><span id="updated-at">尚未读取设备</span><label class="toggle"><input id="auto-refresh" type="checkbox" autocomplete="off">自动检查（15 秒）</label><button id="refresh-status" class="secondary" disabled>刷新状态</button></div></div>
@@ -51,7 +51,8 @@
 <div class="section-head"><div><h2>AI指示灯</h2><p class="section-subtitle">多个 AI、多个任务，共用一盏实体状态灯。</p></div><span id="ai-badge" class="badge">跟随已暂停</span></div>
 <div class="ai-connection" id="ai-connection"><div class="ai-connection-heading"><span class="mini-heading">灯板连接</span><span id="ai-connection-status" class="badge">未连接</span></div><div class="ai-connection-main"><strong id="ai-connection-type">尚未连接灯板</strong><code id="ai-connection-endpoint">—</code></div><p id="ai-connection-path">连接后显示灯控通道</p><small id="ai-connection-seen">尚无灯板回执</small></div>
 <details class="config-details" id="startup-settings" open><summary>开机自启与自动连接</summary>
-<div class="startup-options"><label class="toggle"><input id="startup-logon" type="checkbox">登录 Windows 后后台启动</label><label class="toggle"><input id="startup-connect" type="checkbox">启动后自动连接，掉线自动重连</label><label class="toggle"><input id="startup-follow" type="checkbox">自动连接成功后开启 AI 跟随</label></div>
+<div class="startup-options"><label class="toggle"><input id="startup-logon" type="checkbox">登录 Windows 后后台启动</label><label class="toggle"><input id="startup-connect" type="checkbox">启动后自动连接，掉线自动重连</label><label class="toggle"><input id="startup-follow" type="checkbox">自动连接成功后开启 AI 跟随</label><label class="toggle"><input id="startup-roam" type="checkbox">Nano 换 USB 口后自动重连</label></div>
+<p class="hint">平时不轮询串口，收到 Windows 串口插拔通知后才检查。只有一个相符的 CH340 且灯板回执有效时才记住新口；多个相符设备可从托盘手动选择。</p>
 <p class="hint" id="startup-target">先成功连接一次灯板，程序会记住 USB 或 Wi-Fi TCP 设备。</p>
 <div class="form-actions"><button id="startup-save" class="secondary">保存启动设置</button><button id="startup-resume" class="secondary">恢复自动重连</button></div>
 <p class="hint" id="startup-feedback" role="status"></p><p class="hint">开机启动不弹网页，双击托盘图标可打开。手动断开或使用 AT 配置会暂停本次重连；移动安装目录后需重新保存开机启动。</p></details>
@@ -161,6 +162,6 @@ python .\server.py --signal idle --source Claude --session task-1 --ttl 3600</pr
 <section class="panel status-panel" aria-live="polite"><div class="status-title"><i class="dot" id="status-dot"></i><strong id="stage">未连接</strong><span id="progress-count"></span><button id="stop" class="text-button danger" hidden>停止</button></div><p id="message">选择串口，读取小板当前状态。</p><progress id="progress" max="1" value="0" hidden aria-label="操作进度"></progress><div id="ui-error" class="error" role="alert" hidden></div><p id="status-warnings" class="warning-text" hidden></p></section>
 </div></div>
 <details class="panel log-panel"><summary><span>通信记录 <small>本次会话 · 密码隐藏</small></span><span id="log-count">0 条</span></summary><div class="log-tools"><span>自动状态刷新只记录异常</span><button id="export" class="text-button">导出记录</button></div><div id="logs" class="logs" role="log" aria-live="off"><div class="empty-log">连接后显示命令和回复。</div></div></details>
-</main><footer><span>AI 指示灯 3.1.0</span><span>设备状态来自实际回复 · 未确认的联网状态单独标明</span></footer></div>
+</main><footer><span>AI 指示灯 3.1.3</span><span>设备状态来自实际回复 · 未确认的联网状态单独标明</span></footer></div>
 <dialog id="action-dialog"><form method="dialog"><div class="eyebrow">设备操作</div><h2 id="dialog-title"></h2><p id="dialog-description"></p><div class="form-actions"><button value="cancel" class="secondary">取消</button><button id="dialog-confirm" value="confirm" class="primary">继续</button></div></form></dialog>
 </body></html>

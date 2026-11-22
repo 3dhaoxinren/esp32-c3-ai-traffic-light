@@ -33,7 +33,7 @@ class AppServer(ThreadingHTTPServer):
         if local_only:
             self.controller._set(app_version='2.6.0', message='Nano 本地版：选择 USB 灯板')
         else:
-            self.controller._set(app_version='3.1.0')
+            self.controller._set(app_version='3.1.3')
         self.lights = LightController(self.controller.log, demo=demo, local_only=local_only)
         self.connection_lock = threading.RLock()
         self.ai = AiCoordinator(self.lights, self.connection_lock, self.controller.log, demo=demo, preferences=preferences, local_only=local_only)
@@ -266,6 +266,7 @@ def main(local_only=False):
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--self-test", metavar="REPORT", help="Offline package diagnostics")
     parser.add_argument("--autostart", action="store_true", help="Start quietly after Windows sign-in")
+    parser.add_argument("--keep-follow-paused", action="store_true", help="Do not start AI follow on the first automatic connection")
     parser.add_argument("--signal", choices=["idle","running","waiting","error","offline","heartbeat","remove"])
     parser.add_argument("--source", default="custom-ai")
     parser.add_argument("--session", default="main")
@@ -294,6 +295,7 @@ def main(local_only=False):
         if not args.demo and not instance.acquire_or_open(open_existing=not args.autostart):
             return
         server = AppServer(port=args.port, demo=args.demo, local_only=local_only)
+        server.startup.skip_first_auto_follow = args.keep_follow_paused
         server.ai.start()
         server.startup.start()
         if not args.demo:

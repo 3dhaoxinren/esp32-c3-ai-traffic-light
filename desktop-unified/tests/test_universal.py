@@ -23,11 +23,11 @@ class UniversalTests(unittest.TestCase):
             server = AppServer(demo=True)
         self.addCleanup(server.server_close)
         self.assertFalse(server.local_only)
-        self.assertEqual(server.controller.snapshot()['app_version'], '3.1.0')
+        self.assertEqual(server.controller.snapshot()['app_version'], '3.1.3')
         html = (server.assets/'index.html').read_text(encoding='utf-8')
         for text in ['Wi-Fi 配置', 'TCP 客户端', 'Nano USB', '已查看，恢复正常', '开机自启', 'C3 音频']:
             self.assertIn(text, html)
-        self.assertIn('3.1.0', html)
+        self.assertIn('3.1.3', html)
 
     def test_general_api_accepts_tcp_and_serial_without_local_restriction(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, LOCALAPPDATA=tmp):

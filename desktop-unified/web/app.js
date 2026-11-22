@@ -290,18 +290,20 @@ function renderStartup(s) {
     $('startup-logon').checked=!!a.autostart?.enabled;
     $('startup-connect').checked=!!a.auto_connect;
     $('startup-follow').checked=!!a.auto_follow;
+    $('startup-roam').checked=!!a.roam_usb;
   }
   $('startup-logon').disabled=busy||!a.autostart?.supported;
   $('startup-connect').disabled=busy;
   $('startup-follow').disabled=busy;
+  $('startup-roam').disabled=busy;
   $('startup-save').disabled=busy;
   $('startup-resume').disabled=busy||!a.auto_connect||!t||s.lights?.connected||s.lights?.busy||s.busy||s.connected;
   $('startup-target').textContent=t?'已记住：'+(t.transport==='tcp'?`Wi-Fi TCP · ${t.host}:${t.tcp_port}`:`USB · ${t.port} · 115200${t.location?' · USB位置 '+t.location:''}（多串口优先按序列号或已记住的位置匹配）`):'尚未记住设备，请先在“灯控调试”成功连接一次。';
   $('startup-feedback').textContent=startupDirty?'有未保存修改':a.warning||a.autostart?.warning||a.message||'尚未启用自动连接';
 }
-for(const id of ['startup-logon','startup-connect','startup-follow'])$(id).addEventListener('change',()=>{startupDirty=true;if(lastState)renderStartup(lastState);});
+for(const id of ['startup-logon','startup-connect','startup-follow','startup-roam'])$(id).addEventListener('change',()=>{startupDirty=true;if(lastState)renderStartup(lastState);});
 $('startup-save').addEventListener('click',async()=>{
-  const saved=await perform('startup_settings',{autostart:$('startup-logon').checked,auto_connect:$('startup-connect').checked,auto_follow:$('startup-follow').checked});
+  const saved=await perform('startup_settings',{autostart:$('startup-logon').checked,auto_connect:$('startup-connect').checked,auto_follow:$('startup-follow').checked,roam_usb:$('startup-roam').checked});
   if(saved){startupDirty=false;if(lastState)renderStartup(lastState);}
 });
 $('startup-resume').addEventListener('click',()=>perform('startup_resume'));

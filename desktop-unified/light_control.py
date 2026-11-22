@@ -1,4 +1,5 @@
 """Persistent, manually operated Nano lamp connection (USB serial or TCP)."""
+import os
 import re
 import socket
 import threading
@@ -8,6 +9,7 @@ import serial
 from serial.tools import list_ports
 
 from core import DeviceError, validate_host
+from ch340_serial import CachedCH340Serial
 from lamp_preferences import validate_pattern, DEFAULT_PATTERNS
 from screen_preferences import validate_screen, SCREEN_STATES, render_notice
 
@@ -58,10 +60,12 @@ class LightController:
                     action in ('light_screen', 'light_notice') or
                     (action == 'light_send' and data.get('command') == 'NET ON')):
                 raise DeviceError("Nano 本地版仅支持 USB 灯控")
-            if action == "light_connect":
-                if self.link:
+            if action in ("light_connect", "light_switch_serial"):
+                if action == "light_connect" and self.link:
                     raise DeviceError("请先断开当前灯控连接")
                 transport = data.get("transport")
+                if action == "light_switch_serial" and transport != "serial":
+                    raise DeviceError("切换串口只使用 USB")
                 if transport == "serial":
                     if data.get("port") not in {p.device for p in list_ports.comports()}:
                         raise DeviceError("请选择 Nano 对应的 USB 串口")
@@ -113,13 +117,15 @@ class LightController:
             elif action != "light_disconnect":
                 raise DeviceError("不支持的灯控操作")
             self.cancelled.clear()
-            self._set(busy=True, result="running", message="正在连接…" if action == "light_connect" else "正在等待回执…")
+            self._set(busy=True, result="running", message="正在连接…" if action in ("light_connect", "light_switch_serial") else "正在等待回执…")
             self.worker = threading.Thread(target=self._run, args=(action, dict(data)), daemon=True)
             self.worker.start()
 
     def _run(self, action, data):
         try:
-            if action == "light_connect":
+            if action in ("light_connect", "light_switch_serial"):
+                if action == "light_switch_serial":
+                    self._close()
                 self._connect(data)
             elif action == "light_disconnect":
                 self._close()
@@ -163,9 +169,12 @@ class LightController:
                   screen_supported=None, screen_error='')
         if transport == "serial":
             found=next((p for p in list_ports.comports() if p.device==data["port"]),None)
-            if found is not None and (getattr(found,'vid',None),getattr(found,'pid',None))==(0x303a,0x1001):
+            usb_id=(getattr(found,'vid',None),getattr(found,'pid',None))
+            if usb_id==(0x303a,0x1001):
                 self.link=serial.Serial(port=None,baudrate=115200,timeout=.05,write_timeout=1)
                 self.link.dtr=False;self.link.rts=False;self.link.port=data["port"];self.link.open()
+            elif os.name=="nt" and usb_id==(0x1a86,0x7523):
+                self.link=CachedCH340Serial(data["port"],115200,timeout=.05,write_timeout=1)
             else:
                 self.link=serial.Serial(data["port"],115200,timeout=.05,write_timeout=1)
             self._set(endpoint=data["port"]+" · 115200")
@@ -183,6 +192,8 @@ class LightController:
         if self.state.get('sound_v2'):
             self._probe_pcm()
         self._set(connected=True)
+        if getattr(self.link,"reused_config",False) is True:
+            self.log("CH340 驱动兼容模式：沿用 115200/8N1，Nano 已返回状态。","info")
         self.log("灯控已连接 " + self.state["endpoint"], "success")
 
     def _probe_pcm(self):
@@ -416,6 +427,16 @@ class LightController:
             self.log(line, "rx")
             return
         raise DeviceError("未收到灯控回执，已断开且未重发。检查 Nano 灯控程序、模块透传及连接；重连后先查询状态。")
+
+    def serial_handle_alive(self):
+        """Read driver status only after a removal notification, never by timer."""
+        if self.link is None:
+            return False
+        try:
+            _ = self.link.in_waiting
+        except OSError:
+            return False
+        return True
 
     def _close(self):
         if self.link:

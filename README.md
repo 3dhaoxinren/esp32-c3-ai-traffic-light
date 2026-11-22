@@ -2,11 +2,11 @@
 
 ## Windows 统一版下载
 
-- [3.1.0 Windows x64 ZIP 便携版（不需要 Python）](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/download/v3.1.0/AI-Lamp-3.1.0-win-x64.zip)
-- [3.1.0 完整更新包（Windows + ESP32-C3 固件）](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/download/v3.1.0/AI-Lamp-3.1.0-update-kit.zip) · [更新与配对说明](UPGRADING.md)
-- [Release 说明、校验文件](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/tag/v3.1.0) · [统一版源码、局域网搜索和使用说明](desktop-unified/README.md)
+- [3.1.3 Windows x64 更新包（不需要 Python）](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/download/v3.1.3/AI-Lamp-3.1.3-win-x64-update.zip) · [升级与配对说明](UPGRADING.md)
+- [3.1.3 Release 和 SHA256](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/tag/v3.1.3) · [统一版使用说明](desktop-unified/README.md)
+- [ESP32-C3 固件下载（仍用 v3.1.0 附带的版本）](https://github.com/3dhaoxinren/esp32-c3-ai-traffic-light/releases/tag/v3.1.0)
 
-统一版支持 Nano 和 C3，保留托盘、自启、自动跟随与 C3 分段播报。AT 默认隐藏；Nano 接线页已取消。可搜索附近 Wi-Fi 和局域网灯板。下载后完整解压，双击文件夹内的 `AI-Lamp.exe`。
+统一版支持 Nano 和 C3，保留托盘、自启、自动跟随与 C3 分段播报。3.1.3 不再定时扫描串口，换 USB 口后由 Windows 插拔通知触发重连；也可在托盘右键手动选串口。下载后完整解压，双击「双击升级.cmd」，或打开 `Windows/AI-Lamp.exe` 便携运行。**本次不用刷固件。**
 
 
 这是视频里 **ESP32-C3 + MAX98357A + 单只 1609 铝膜喇叭** 的固件源码，以及后续重做的 AI 指示灯桌面客户端。原玩具的外壳、灯和顶部按键保留；改造前由纽扣电池供电，没有 USB 口，改造后才从 C3 的 USB 供电。

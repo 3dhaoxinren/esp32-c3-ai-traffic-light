@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from core import DeviceError
-from startup import (AutoConnector, ConnectionPreferences, WindowsStartup, capture_target,
+from startup import (CH340, AutoConnector, ConnectionPreferences, WindowsStartup, capture_target,
                      resolve_target, validate_target)
 
 
@@ -28,15 +28,25 @@ class StartupTests(unittest.TestCase):
         self.module = dict(connected=False, busy=False)
         self.server = NS(connection_lock=threading.RLock(),
                          controller=NS(demo=False, snapshot=lambda: dict(self.module), log=Mock()),
-                         lights=NS(snapshot=lambda: dict(self.light), start=Mock()), ai=NS(set_enabled=Mock()))
+                         lights=NS(snapshot=lambda: dict(self.light), start=Mock(),
+                                   _close=Mock(side_effect=lambda:self.light.update(connected=False)),
+                                   serial_handle_alive=Mock(return_value=True)),
+                         ai=NS(set_enabled=Mock(), reset_link_state=Mock()))
         self.registration = NS(snapshot=lambda: dict(supported=True, enabled=False, warning=""), set_enabled=Mock())
         self.now = 100
         self.ports = [usb()]
-        self.auto = AutoConnector(self.server, self.prefs, self.registration, lambda: self.ports, lambda: self.now)
+        self.scan = Mock(side_effect=lambda: self.ports)
+        self.auto = AutoConnector(self.server, self.prefs, self.registration, self.scan, lambda: self.now)
         self.target = capture_target(dict(transport="serial", port="COM3"), self.ports)
 
     def enable(self, **overrides):
         self.prefs.save(target=self.target, auto_connect=True, **overrides)
+
+    def event(self, identity=CH340, removed=False):
+        self.auto.notify_serial_change(identity, removed)
+        self.auto.step()
+        self.now += .5
+        self.auto.step()
 
     def test_defaults_are_opt_in(self):
         self.auto.step()
@@ -80,6 +90,21 @@ class StartupTests(unittest.TestCase):
         ports = [usb("COM17", location="1-7.2"), usb("COM3", location="1-5")]
         self.assertEqual(resolve_target(self.target, ports), dict(transport="serial", port="COM3"))
 
+    def test_remembered_ch340_interface_zero_can_match_plain_location_on_same_com(self):
+        target={**self.target,"location":"1-5:x.0"}
+        ports=[usb("COM17",location="1-7.2"),usb("COM3",location="1-5")]
+        self.assertEqual(resolve_target(target,ports),dict(transport="serial",port="COM3"))
+
+    def test_plain_location_never_matches_a_different_com_other_device_or_interface(self):
+        for target,port in (
+            ({**self.target,"location":"1-5:x.0"},usb("COM17",location="1-5")),
+            ({**self.target,"location":"1-5:x.0"},usb("COM3",location="1-6")),
+            ({**self.target,"location":"1-5:x.1"},usb("COM3",location="1-5")),
+            ({**self.target,"vid":0x303A,"pid":0x1001,"location":"1-5:x.0"},
+             usb("COM3",location="1-5",vid=0x303A,pid=0x1001)),
+        ):
+            with self.assertRaises(DeviceError):resolve_target(target,[port])
+
     def test_multiple_ch340_port_renumber_keeps_physical_binding(self):
         ports = [usb("COM3", location="1-7.2"), usb("COM21", location="1-5")]
         self.assertEqual(resolve_target(self.target, ports)["port"], "COM21")
@@ -87,6 +112,94 @@ class StartupTests(unittest.TestCase):
     def test_other_ch340_alone_is_not_a_replacement_for_absent_bound_board(self):
         with self.assertRaises(DeviceError):
             resolve_target(self.target, [usb("COM17", location="1-7.2")])
+
+    def test_opt_in_roam_selects_only_one_serial_numberless_ch340(self):
+        actual=usb("COM17",location="1-7.2")
+        self.assertEqual(resolve_target(self.target,[actual],roam_usb=True)["port"],"COM17")
+        for ports in ([actual,usb("COM18",location="1-8")],
+                      [usb("COM17",serial="other",location="1-7.2")],
+                      [usb("COM17",location="",)]):
+            with self.assertRaises(DeviceError):resolve_target(self.target,ports,roam_usb=True)
+
+    def test_roaming_target_saved_only_after_successful_lamp_handshake(self):
+        self.enable(roam_usb=True)
+        desired=usb("COM27",location="1-2.3")
+        self.ports=[desired]
+        self.auto.step()
+        self.server.lights.start.assert_called_once_with("light_connect",dict(transport="serial",port="COM27"))
+        self.assertEqual(self.prefs.snapshot()["target"],self.target)
+        self.light["connected"]=True;self.auto.step()
+        self.assertEqual(self.prefs.snapshot()["target"]["port"],"COM27")
+        self.assertEqual(self.prefs.snapshot()["target"]["location"],"1-2.3")
+
+    def test_idle_usb_disconnect_detected_with_ai_follow_off_then_roams(self):
+        self.enable(roam_usb=True,auto_follow=False)
+        self.light.update(connected=True,transport="serial",endpoint="COM3 · 115200")
+        self.ports=[usb("COM27",location="1-2")]
+        for i in range(60):
+            self.now += 1
+            self.auto.step()
+        self.scan.assert_not_called()
+        self.server.lights._close.assert_not_called()
+        self.auto.notify_serial_change(CH340, True)
+        self.event()  # Arrival and removal are coalesced into one enumeration.
+        self.scan.assert_called_once()
+        self.server.lights._close.assert_called_once()
+        self.server.lights.start.assert_called_once_with("light_connect",dict(transport="serial",port="COM27"))
+        self.server.ai.set_enabled.assert_not_called()
+
+    def test_removal_of_other_adapter_does_not_close_active_port(self):
+        self.enable(roam_usb=True)
+        self.light.update(connected=True,transport="serial",endpoint="COM3 · 115200")
+        self.auto.step()
+        self.event((0x303A, 0x1001), removed=True)
+        self.scan.assert_not_called()
+        self.event(removed=True)  # An identical CH340 was removed but ours is still healthy.
+        self.scan.assert_called_once()
+        self.server.lights._close.assert_not_called()
+        self.server.lights.start.assert_not_called()
+
+    def test_same_com_fast_replug_with_invalid_handle_reopens(self):
+        self.enable()
+        self.light.update(connected=True,transport="serial",endpoint="COM3 · 115200")
+        self.server.lights.serial_handle_alive.return_value = False
+        self.auto.step()
+        self.event(removed=True)
+        self.server.lights._close.assert_called_once()
+        self.server.lights.start.assert_called_once_with("light_connect",dict(transport="serial",port="COM3"))
+
+    def test_unplug_during_audio_waits_then_checks_once(self):
+        self.enable(roam_usb=True)
+        self.light.update(connected=True,transport="serial",endpoint="COM3 · 115200")
+        self.server.audio = NS(snapshot=Mock(return_value={"busy": True}))
+        self.auto.step()
+        self.ports = []
+        self.event(removed=True)
+        self.scan.assert_not_called()
+        self.server.audio.snapshot.return_value = {"busy": False}
+        self.auto.step()
+        self.scan.assert_called_once()
+        self.server.lights._close.assert_called_once()
+        self.now += 60
+        self.auto.step()
+        self.scan.assert_called_once()
+
+    def test_lost_link_without_hotplug_triggers_one_check(self):
+        self.enable()
+        self.light.update(connected=True,transport="serial",endpoint="COM3 · 115200")
+        self.auto.step()
+        self.scan.assert_not_called()
+        self.light["connected"] = False
+        self.auto.step()
+        self.scan.assert_called_once()
+        self.now += 60
+        self.auto.step()
+        self.scan.assert_called_once()
+
+    def test_old_ui_settings_call_preserves_opt_in(self):
+        self.enable(roam_usb=True)
+        self.auto.configure(dict(autostart=True,auto_connect=True,auto_follow=True))
+        self.assertTrue(self.prefs.snapshot()["roam_usb"])
 
     def test_reused_com_name_at_wrong_usb_location_is_not_trusted(self):
         with self.assertRaises(DeviceError):
@@ -165,16 +278,19 @@ class StartupTests(unittest.TestCase):
         self.auto.step()
         self.server.ai.set_enabled.assert_not_called()
 
-    def test_waits_for_usb_and_uses_backoff_then_recovers(self):
+    def test_waits_for_usb_arrival_without_polling_then_recovers(self):
         self.enable()
         self.ports = []
         self.auto.step()
         self.assertEqual(self.auto.attempts, 1)
         self.ports = [usb("COM17")]
-        self.auto.step()
+        for _ in range(40):
+            self.now += 2
+            self.auto.step()
+        self.scan.assert_called_once()
         self.server.lights.start.assert_not_called()
-        self.now += 2
-        self.auto.step()
+        self.event()
+        self.assertEqual(self.scan.call_count, 2)
         self.server.lights.start.assert_called_once_with("light_connect", dict(transport="serial", port="COM17"))
 
     def test_manual_disconnect_and_at_do_not_fight_reconnect(self):
@@ -193,21 +309,44 @@ class StartupTests(unittest.TestCase):
         self.auto.step()
         self.server.lights.start.assert_not_called()
 
-    def test_failed_auto_connection_retries_but_does_not_enable_follow(self):
+    def test_failed_serial_auto_connection_waits_for_explicit_resume(self):
         self.enable()
         self.auto.step()
         self.auto.step()
         self.assertEqual(self.server.lights.start.call_count, 1)
         self.now += 2
         self.auto.step()
+        self.server.lights.start.assert_called_once()
+        self.auto.resume()
+        self.auto.step()
         self.assertEqual(self.server.lights.start.call_count, 2)
         self.server.ai.set_enabled.assert_not_called()
 
-    def test_tcp_endpoint_and_port_persist(self):
+    def test_tcp_endpoint_retry_uses_backoff_and_never_enumerates_serial(self):
         target = dict(transport="tcp", host="192.168.1.100", tcp_port=8080)
         self.prefs.save(auto_connect=True, target=target)
         self.auto.step()
         self.server.lights.start.assert_called_once_with("light_connect", target)
+        self.auto.step()
+        self.server.lights.start.assert_called_once()
+        self.now += 2
+        self.auto.step()
+        self.assertEqual(self.server.lights.start.call_count, 2)
+        self.scan.assert_not_called()
+
+    def test_first_follow_can_stay_paused_without_changing_preferences(self):
+        self.enable()
+        self.auto.skip_first_auto_follow = True
+        self.auto.step()
+        self.light.update(connected=True,transport="serial",endpoint="COM3 · 115200")
+        self.auto.step()
+        self.server.ai.set_enabled.assert_not_called()
+        self.assertTrue(self.prefs.value["auto_follow"])
+        self.light["connected"] = False
+        self.auto.step()
+        self.light["connected"] = True
+        self.auto.step()
+        self.server.ai.set_enabled.assert_called_once_with(True)
 
     def test_demo_and_shutdown_never_connect(self):
         self.enable()

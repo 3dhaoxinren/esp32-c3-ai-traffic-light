@@ -25,14 +25,32 @@ def run(AppServer,out):
     try:
         for path in ('/','/app.js','/audio.js','/discovery.js','/style.css','/unified.css','/Nano_HLK_M30.ino'):
             assert len(get(path))>100,path
-        assert b'3.1.0' in get('/') and b'id="tab-nano"' not in get('/')
+        assert b'3.1.3' in get('/') and b'id="tab-nano"' not in get('/')
         assert b'id="advanced-at-toggle"' in get('/') and b'id="discover-lan"' in get('/')
+        assert b'id="startup-roam"' in get('/')
         # Unique window class even when the user's real tray application is running.
         key='AILamp.WinPortableCheck.'+uuid.uuid4().hex
         desktop_tray.window_class=lambda:key
         t=DesktopTray(s);t.start()
         assert t.hwnd is not None and t.hwnd!=0
-        state=json.loads(get('/api/state'));assert state['app_version']=='3.1.0'
+        import win32gui as g
+        import win32con as c
+        menu = g.CreatePopupMenu()
+        try:
+            assert t._append_serial_menu(menu, s.lights.snapshot()) == {}
+            popup = g.GetSubMenu(menu, 0)
+            assert g.GetMenuItemCount(popup) == 1
+            assert g.GetMenuState(popup, 0, c.MF_BYPOSITION) & c.MF_GRAYED
+        finally:
+            g.DestroyMenu(menu)
+        from serial_notifications import WindowsSerialNotifications
+        watcher = WindowsSerialNotifications(lambda *_: None)
+        try:
+            assert watcher.handle
+        finally:
+            watcher.close()
+        assert not watcher.handle
+        state=json.loads(get('/api/state'));assert state['app_version']=='3.1.3'
         seed=bytes(range(48))*180
         temp=io.BytesIO()
         with wave.open(temp,'wb') as f:
@@ -48,6 +66,8 @@ def run(AppServer,out):
         p=io.BytesIO(get('/api/audio_preview',{'source':q['source']['id'],'start':16,'end':257,'slot':2}))
         with wave.open(p,'rb') as f:assert f.readframes(241)==seed[32:514]
         import audio_desk, edge_tts, miniaudio
+        from ch340_serial import is_setcommstate_31
+        assert is_setcommstate_31("Cannot configure port, something went wrong. Original message: PermissionError(13, 'test', None, 31)")
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
         from tempfile import TemporaryDirectory
         from lan_readback import KeyStore,key_id
@@ -70,8 +90,9 @@ def run(AppServer,out):
         finally:audio_desk.synthesize=synth
         assert json.loads(get('/api/audio'))==before
         d=json.loads(get('/api/discover'));assert not d['busy']
-        report=dict(version='3.1.0',packaged=bool(getattr(__import__('sys'),'frozen',False)),
-                    localhost_assets=True,win32_tray_registered=True,demo_audio_import_and_cut=True,
+        report=dict(version='3.1.3',packaged=bool(getattr(__import__('sys'),'frozen',False)),
+                    localhost_assets=True,win32_tray_registered=True,win32_usb_submenu=True,
+                    windows_serial_notifications=True,demo_audio_import_and_cut=True,
                     discovery_ui_available=True,nano_wiring_page_absent=True,device_untouched=True,
                     text_audition_unchanged_source=True,encrypted_lan_dependencies=True,voice_packages_available=True)
         Path(out).write_text(json.dumps(report,sort_keys=True,indent=2)+'\n',encoding='utf8')

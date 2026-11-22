@@ -33,12 +33,13 @@ class TrayAckTests(unittest.TestCase):
     def menu(self, during=None):
         light = dict(connected=True, busy=False, transport='serial', endpoint='COM3')
         server = NS(lights=NS(snapshot=lambda: light), ai=self.ai, connection_lock=self.ai.connection_lock)
+        server.controller = NS(demo=True)
         tray = DesktopTray(server)
         tray._update = Mock()
         gui = Mock()
         gui.GetCursorPos.return_value = (10, 10)
         gui.TrackPopupMenu.side_effect = lambda *args: (during() if during else None) or 5
-        constants = NS(MF_STRING=0, MF_GRAYED=1, MF_SEPARATOR=2, TPM_RETURNCMD=4, TPM_RIGHTBUTTON=8, WM_NULL=0)
+        constants = NS(MF_STRING=0, MF_GRAYED=1, MF_SEPARATOR=2, TPM_RETURNCMD=4, TPM_RIGHTBUTTON=8, WM_NULL=0, MF_POPUP=16)
         with patch.dict('sys.modules', win32gui=gui, win32con=constants):
             tray._menu()
         return gui, tray
