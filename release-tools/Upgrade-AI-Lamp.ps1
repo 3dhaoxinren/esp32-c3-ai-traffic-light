@@ -8,7 +8,7 @@ param(
     [switch]$NoRegistry
 )
 $ErrorActionPreference = 'Stop'
-$version = '3.1.3'
+$version = '3.1.5'
 $components = @('AI-Lamp.exe','_internal','licenses','LICENSE.txt','THIRD-PARTY-NOTICES.txt','使用说明.txt','package-manifest.json')
 $legacyHash = 'AD47DFB624B43215EF82C2EBF6F7E3073900735BF3989ABF3B9F758C4F77504A'
 $reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'

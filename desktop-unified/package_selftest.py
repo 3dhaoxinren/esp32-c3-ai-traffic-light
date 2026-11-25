@@ -25,7 +25,7 @@ def run(AppServer,out):
     try:
         for path in ('/','/app.js','/audio.js','/discovery.js','/style.css','/unified.css','/Nano_HLK_M30.ino'):
             assert len(get(path))>100,path
-        assert b'3.1.3' in get('/') and b'id="tab-nano"' not in get('/')
+        assert b'3.1.5' in get('/') and b'id="tab-nano"' not in get('/')
         assert b'id="advanced-at-toggle"' in get('/') and b'id="discover-lan"' in get('/')
         assert b'id="startup-roam"' in get('/')
         # Unique window class even when the user's real tray application is running.
@@ -50,7 +50,28 @@ def run(AppServer,out):
         finally:
             watcher.close()
         assert not watcher.handle
-        state=json.loads(get('/api/state'));assert state['app_version']=='3.1.3'
+        from ai_status import visible_status_alerts
+        s.lights._set(connected=True)
+        s.ai.enabled = True
+        event = dict(source='self-test', session='waiting', state='waiting', event_id='test-1')
+        s.ai.registry.event(event)
+        s.ai.reset_status_display(visible_status_alerts(s.ai.snapshot()))
+        assert s.ai.snapshot()['target'] == 'idle' and s.ai.enabled
+        s.ai.registry.event({**event, 'event_id':'test-2'})
+        assert s.ai.snapshot()['target'] == 'waiting'
+        s.ai.registry.clock = lambda:1000
+        same_turn = {**event, 'session':'execution', 'state':'running'}
+        s.ai.registry.event(same_turn, observed_execution=(10,999000))
+        s.ai.reset_status_display(visible_status_alerts(s.ai.snapshot()))
+        s.ai.registry.event(same_turn, observed_execution=(10,999000))
+        assert s.ai.snapshot()['target'] == 'idle'
+        s.ai.registry.clock = lambda:1001
+        s.ai.registry.event(same_turn, observed_execution=(11,1000500))
+        assert s.ai.snapshot()['target'] == 'running' and s.ai.enabled
+        s.ai.registry.clock = time.time
+        s.lights._set(connected=False)
+        s.ai.enabled = False
+        state=json.loads(get('/api/state'));assert state['app_version']=='3.1.5'
         seed=bytes(range(48))*180
         temp=io.BytesIO()
         with wave.open(temp,'wb') as f:
@@ -90,9 +111,10 @@ def run(AppServer,out):
         finally:audio_desk.synthesize=synth
         assert json.loads(get('/api/audio'))==before
         d=json.loads(get('/api/discover'));assert not d['busy']
-        report=dict(version='3.1.3',packaged=bool(getattr(__import__('sys'),'frozen',False)),
+        report=dict(version='3.1.5',packaged=bool(getattr(__import__('sys'),'frozen',False)),
                     localhost_assets=True,win32_tray_registered=True,win32_usb_submenu=True,
-                    windows_serial_notifications=True,demo_audio_import_and_cut=True,
+                    windows_serial_notifications=True,reset_status_display=True,execution_rearms_same_turn=True,
+                    demo_audio_import_and_cut=True,
                     discovery_ui_available=True,nano_wiring_page_absent=True,device_untouched=True,
                     text_audition_unchanged_source=True,encrypted_lan_dependencies=True,voice_packages_available=True)
         Path(out).write_text(json.dumps(report,sort_keys=True,indent=2)+'\n',encoding='utf8')

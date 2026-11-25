@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 import webbrowser
-from ai_status import visible_errors
+from ai_status import visible_errors, visible_status_alerts
 from core import DeviceError
 
 STATE_NAMES = {"idle": "空闲 / 完成", "running": "执行中", "waiting": "等待确认", "error": "异常 / 报错", "offline": "状态失效"}
@@ -186,6 +186,7 @@ class DesktopTray:
         import win32gui as g
         light, ai = self.server.lights.snapshot(), self.server.ai.snapshot()
         errors = visible_errors(ai)
+        alerts = visible_status_alerts(ai)
         menu = g.CreatePopupMenu()
         try:
             g.AppendMenu(menu, c.MF_STRING | c.MF_GRAYED, 0, tray_status(light, ai)[1].replace("\n", " · "))
@@ -196,8 +197,10 @@ class DesktopTray:
             g.AppendMenu(menu, c.MF_STRING, 6, "C3 音频剪辑与播报")
             flags = c.MF_STRING | (0 if light["connected"] and not light["busy"] else c.MF_GRAYED)
             g.AppendMenu(menu, flags, 3, "暂停并熄灯" if ai["enabled"] else "开启自动跟随")
+            flags = c.MF_STRING | (0 if light["connected"] and ai["enabled"] and alerts else c.MF_GRAYED)
+            g.AppendMenu(menu, flags, 7, "状态恢复正常")
             flags = c.MF_STRING | (0 if errors else c.MF_GRAYED)
-            g.AppendMenu(menu, flags, 5, "已查看，恢复正常")
+            g.AppendMenu(menu, flags, 5, "确认已查看的异常")
             g.AppendMenu(menu, c.MF_SEPARATOR, 0, "")
             g.AppendMenu(menu, c.MF_STRING, 4, "退出AI指示灯")
             x, y = g.GetCursorPos()
@@ -220,6 +223,9 @@ class DesktopTray:
                 # Use identities captured when this menu opened; a new failure
                 # arriving while it is open must remain unacknowledged.
                 self.server.ai.acknowledge_errors(errors)
+                self._update()
+            elif selected == 7:
+                self.server.ai.reset_status_display(alerts)
                 self._update()
             elif selected in serial_commands:
                 self._switch_serial(serial_commands[selected])

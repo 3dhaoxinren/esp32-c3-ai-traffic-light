@@ -1,13 +1,15 @@
 import json
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 import urllib.request
 import urllib.error
 
-from ai_status import StateRegistry, CodexObserver, AiCoordinator
+from ai_status import StateRegistry, CodexObserver, AiCoordinator, visible_status_alerts
 from core import DeviceError
 from server import AppServer
 import test_lights
@@ -49,6 +51,62 @@ class RegistryTests(unittest.TestCase):
 
 
 class CodexTests(unittest.TestCase):
+    def test_reset_reawakens_on_new_action_in_same_turn_but_not_continuation_or_completion(self):
+        with tempfile.TemporaryDirectory() as temp, closing(sqlite3.connect(Path(temp)/'thread_history_1.sqlite')) as c:
+            c.executescript("""
+                CREATE TABLE thread_turns(thread_id, turn_id, status, started_at, completed_at);
+                CREATE TABLE thread_items(thread_id, turn_id, item_type, item_json, created_at_ms, completed_at_ms, rollout_ordinal);
+                INSERT INTO thread_turns VALUES('test','turn','inProgress',900,NULL);
+                INSERT INTO thread_items VALUES('test','turn','commandExecution','{}',910000,NULL,1);
+                """)
+            c.commit()
+            now = 1000
+            r = StateRegistry(clock=lambda:now)
+            o = CodexObserver(r,temp)
+            o.process_alive = lambda:True
+            def sync(sql=None):
+                if sql:
+                    c.executescript(sql)
+                    c.commit()
+                    o._db_signature = None
+                with patch('ai_status.time.time', return_value=now):
+                    o.poll()
+                return r.snapshot()['state']
+            self.assertEqual(sync(),'running')
+            self.assertEqual(r.reset_status_display(visible_status_alerts(r.snapshot())), (1,0))
+            now += 2
+            self.assertEqual(sync(),'idle')
+            r.event(dict(source='Codex-local',session='test',state='heartbeat'))
+            self.assertEqual(r.snapshot()['state'],'idle')
+            self.assertEqual(sync("""UPDATE thread_items SET completed_at_ms=1001000 WHERE rollout_ordinal=1;
+                INSERT INTO thread_items VALUES('test','turn','reasoning','{}',1001001,NULL,2);"""), 'idle')
+            # A database write arriving late for an action already started before reset.
+            self.assertEqual(sync("""INSERT INTO thread_items VALUES('test','turn','mcpToolCall','{}',999999,NULL,3);"""), 'idle')
+            self.assertEqual(sync("""INSERT INTO thread_items VALUES('test','turn','mcpToolCall','{}',1001500,NULL,4);"""), 'running')
+            self.assertEqual(r.snapshot()['sessions'][0]['event_id'],'turn')
+            self.assertFalse(r.snapshot()['sessions'][0]['suppressed'])
+            self.assertEqual(r.finishes(),(0,[]))
+
+    def test_a_new_execution_resolves_old_question_but_not_new_question_or_pending_approval(self):
+        with tempfile.TemporaryDirectory() as temp, closing(sqlite3.connect(Path(temp)/'thread_history_1.sqlite')) as c:
+            c.executescript("""
+                CREATE TABLE thread_turns(thread_id, turn_id, status, started_at, completed_at);
+                CREATE TABLE thread_items(thread_id, turn_id, item_type, item_json, created_at_ms, completed_at_ms, rollout_ordinal);
+                INSERT INTO thread_turns VALUES('test','turn','inProgress',900,NULL);
+                INSERT INTO thread_items VALUES('test','turn','agentMessage','{"questions":[{}]}',910000,NULL,1);
+                """)
+            o=CodexObserver(StateRegistry(),temp)
+            self.assertEqual(o.read_states(now=1000),[('test','waiting')])
+            c.executescript("""INSERT INTO thread_items VALUES('test','turn','commandExecution','{}',920000,NULL,2);""")
+            self.assertEqual(o.read_states(now=1000),[('test','running')])
+            c.executescript("""INSERT INTO thread_items VALUES('test','turn','agentMessage','{"questions":[{}]}',930000,NULL,3);""")
+            self.assertEqual(o.read_states(now=1000),[('test','waiting')])
+            c.executescript("""
+                INSERT INTO thread_items VALUES('test','turn','commandExecution','{"status":"waitingForApproval"}',940000,NULL,4);
+                INSERT INTO thread_items VALUES('test','turn','commandExecution','{}',950000,NULL,5);
+                """)
+            self.assertEqual(o.read_states(now=1000),[('test','waiting')])
+
     def test_lifecycle_questions_and_tool_failure(self):
         with tempfile.TemporaryDirectory() as temp:
             c=sqlite3.connect(Path(temp)/'thread_history_1.sqlite')

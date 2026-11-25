@@ -56,7 +56,7 @@ function render(s){
     const line=document.createElement('div');line.className='ai-session';
     const source=document.createElement('strong'),id=document.createElement('small'),status=document.createElement('span');
     source.textContent=row.source;id.textContent=row.session;
-    status.textContent=row.stale?'已失效':row.acknowledged?'异常已查看':names[row.effective];
+    status.textContent=row.stale?'已失效':row.acknowledged?'异常已查看':row.suppressed?`灯光已恢复（${names[row.state]}）`:names[row.effective];
     status.className='ai-session-state state-'+row.effective;line.append(source,id,status);$('sessions').append(line);
   }
   if(!startupDirty){$('logon').checked=auto.autostart.enabled;$('auto-connect').checked=auto.auto_connect;$('auto-follow').checked=auto.auto_follow;}

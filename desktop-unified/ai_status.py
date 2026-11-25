@@ -17,6 +17,10 @@ from screen_preferences import ScreenPreferences, screen_target
 PRIORITY = {"offline": 0, "idle": 1, "running": 2, "waiting": 3, "error": 4}
 LABELS = {"offline": "未接入 / 状态失效", "idle": "空闲 / 完成", "running": "执行中", "waiting": "等待确认", "error": "异常 / 报错"}
 IDENTIFIER = re.compile(r"^[\w .:@-]{1,80}$")
+ACTIVE_ALERTS = {"running", "waiting", "error"}
+# Persisted action rows, not reasoning, chat messages, refreshes or tool completion updates.
+CODEX_ACTION_ITEMS = ('commandExecution', 'mcpToolCall', 'dynamicToolCall', 'fileChange', 'webSearch', 'imageGeneration')
+CODEX_ACTION_PARAMS = ','.join('?' for _ in CODEX_ACTION_ITEMS)
 
 
 def visible_errors(snapshot):
@@ -24,11 +28,17 @@ def visible_errors(snapshot):
             for row in snapshot['sessions'] if row['effective'] == 'error' and not row['stale']]
 
 
+def visible_status_alerts(snapshot):
+    return [(row['source'], row['session'], row['episode'])
+            for row in snapshot['sessions'] if row['effective'] in ACTIVE_ALERTS]
+
+
 class StateRegistry:
     def __init__(self, clock=time.time, ack_path=None):
         self.clock = clock
         self.lock = threading.RLock()
         self.sessions = {}
+        self.episode_seq = 0
         self.done_log = deque(maxlen=256)
         self.done_seq = 0
         self.ack_path = Path(ack_path) if ack_path else None
@@ -46,7 +56,7 @@ class StateRegistry:
         with self.lock:
             return self.done_seq, [(seq, stamp) for seq, stamp, _ in self.done_log if seq>after]
 
-    def event(self, data, *, observed_completion_at=None):
+    def event(self, data, *, observed_completion_at=None, observed_execution=None):
         source, session, state = data.get("source"), data.get("session"), data.get("state")
         if any(not isinstance(x, str) or not IDENTIFIER.fullmatch(x) for x in (source, session)):
             raise DeviceError("source 和 session 需为 1–80 位名称或标识")
@@ -75,6 +85,7 @@ class StateRegistry:
                     raise DeviceError("会话不存在或已失效，请重新上报明确状态")
                 state = self.sessions[key]["state"]
                 event_id = self.sessions[key]['event_id']
+                observed_execution = None
             previous = self.sessions.get(key, {})
             completed = state == 'idle' and (
                 data.get('completed') is True or
@@ -89,8 +100,34 @@ class StateRegistry:
                     self.done_seq+=1
                     stamp=now if observed_completion_at is None else min(float(observed_completion_at),now)
                     self.done_log.append((self.done_seq,stamp,identity))
+            same_episode = (previous.get('expires', 0) > now and previous.get('state') == state
+                            and previous.get('event_id') == event_id)
+            execution = previous['execution'] if same_episode else None
+            cleared_at = previous['cleared_at_ms'] if same_episode else None
+            if observed_execution and (execution is None or observed_execution[0] > execution[0]):
+                execution = observed_execution
+                # SQLite may flush an already-started action after the click.
+                # Compare its creation time, not when we saw it or when it finished.
+                if state == 'running' and cleared_at is not None and execution[1] > cleared_at:
+                    cleared_at = None
+            if not same_episode:
+                self.episode_seq += 1
             self.sessions[key] = dict(source=source, session=session, state=state,
-                                      event_id=event_id, updated=now, expires=now + ttl, completed=completed)
+                                      event_id=event_id, updated=now, expires=now + ttl, completed=completed,
+                                      episode=previous['episode'] if same_episode else self.episode_seq,
+                                      execution=execution, cleared_at_ms=cleared_at)
+
+    def reset_status_display(self, alerts):
+        """Suppress only the status occurrences that were shown when the tray opened."""
+        with self.lock:
+            count, now = 0, self.clock()
+            for source, session, episode in alerts:
+                row = self.sessions.get((source, session))
+                if (row and row['episode'] == episode and row['expires'] > now
+                        and row['state'] in ACTIVE_ALERTS and row['cleared_at_ms'] is None):
+                    row['cleared_at_ms'] = int(now*1000)
+                    count += 1
+            return count, self.done_seq
 
     def acknowledge_errors(self, events):
         # Acknowledge exactly what was displayed, never a newer unseen failure.
@@ -125,8 +162,11 @@ class StateRegistry:
             rows = []
             for v in self.sessions.values():
                 acknowledged = v['state'] == 'error' and (v['source'], v['session'], v['event_id']) in self.acknowledged
-                effective = 'offline' if v['expires'] <= now else 'idle' if acknowledged else v['state']
-                rows.append({**v, 'stale': v['expires'] <= now, 'acknowledged': acknowledged,
+                suppressed = v['cleared_at_ms'] is not None
+                effective = ('offline' if v['expires'] <= now else
+                             'idle' if acknowledged or suppressed else v['state'])
+                rows.append({**{k:value for k,value in v.items() if k not in ('execution','cleared_at_ms')},
+                             'stale': v['expires'] <= now, 'acknowledged': acknowledged, 'suppressed': suppressed,
                              'effective': effective})
         state = max((r["effective"] for r in rows), key=PRIORITY.get, default="offline")
         rows.sort(key=lambda r: (-PRIORITY[r["effective"]], r["source"], r["session"]))
@@ -150,6 +190,7 @@ class CodexObserver:
         self._registered = set()
         self._turn_ids = {}
         self._finished_at = {}
+        self._execution = {}
         self._db_signature=None;self._db_cached_at=0;self._db_rows=[]
 
     def process_alive(self):
@@ -179,23 +220,29 @@ class CodexObserver:
                 FROM thread_turns WHERE started_at >= ? ORDER BY started_at DESC LIMIT 128""", (now-86400,)).fetchall()
             seen = set()
             result = []
+            executions = {}
             for thread_id, turn_id, status, started, completed in turns:
                 if thread_id in seen:
                     continue
                 seen.add(thread_id)
-                latest, question, user, approval = conn.execute("""SELECT
+                latest, question, user, approval, action = conn.execute(f"""SELECT
                     MAX(MAX(created_at_ms,COALESCE(completed_at_ms,0))),
                     MAX(CASE WHEN item_type='agentMessage' AND json_array_length(json_extract(item_json,'$.questions'))>0 THEN rollout_ordinal END),
                     MAX(CASE WHEN item_type='userMessage' THEN rollout_ordinal END),
-                    MAX(CASE WHEN json_extract(item_json,'$.status') IN ('waitingForApproval','waitingForInput') THEN rollout_ordinal END)
-                    FROM thread_items WHERE thread_id=? AND turn_id=?""", (thread_id, turn_id)).fetchone()
+                    MAX(CASE WHEN json_extract(item_json,'$.status') IN ('waitingForApproval','waitingForInput') THEN rollout_ordinal END),
+                    MAX(CASE WHEN item_type IN ({CODEX_ACTION_PARAMS}) THEN printf('%020d:%020d',rollout_ordinal,created_at_ms) END)
+                    FROM thread_items WHERE thread_id=? AND turn_id=?""", (*CODEX_ACTION_ITEMS, thread_id, turn_id)).fetchone()
+                # Keep the timestamp of the same row as the maximum action ordinal.
+                execution = tuple(map(int, action.split(':'))) if action else None
+                execution_ordinal = execution[0] if execution else -1
                 activity = max(started or 0, completed or 0, (latest or 0)/1000)
                 if now-activity > (900 if status == 'inProgress' else 3600):
                     continue
                 if status == 'failed':
                     state = 'error'
                 elif status in ('inProgress', 'completed') and (
-                    (question is not None and question > (user if user is not None else -1)) or
+                    (question is not None and question > (user if user is not None else -1)
+                     and question >= execution_ordinal) or
                     (approval is not None and status == 'inProgress')):
                     state = 'waiting'
                 elif status == 'inProgress':
@@ -208,6 +255,8 @@ class CodexObserver:
                 result.append((thread_id, state))
                 self._turn_ids[thread_id] = turn_id
                 self._finished_at[thread_id] = completed or 0
+                executions[thread_id] = execution
+            self._execution = executions
             return result
         finally:
             conn.close()
@@ -239,7 +288,8 @@ class CodexObserver:
             for session, state in rows:
                 self.registry.event(dict(source='Codex-local', session=session, state=state,
                                          event_id=self._turn_ids[session], ttl=15, completed=state == 'idle'),
-                    observed_completion_at=self._finished_at.get(session,0))
+                    observed_completion_at=self._finished_at.get(session,0),
+                    observed_execution=self._execution.get(session))
         except (OSError, sqlite3.Error, DeviceError):
             self.health = "本地状态读取失败；旧状态将失效，可使用通用接口"
 
@@ -325,6 +375,19 @@ class AiCoordinator:
             self.registry.acknowledge_errors(events)
             self.applied = ""
             self.log("已查看，恢复正常：已解除所查看异常的灯光报警，继续跟随其他会话")
+
+    def reset_status_display(self, alerts):
+        with self.connection_lock:
+            if not self.enabled or not self.lights.snapshot()["connected"]:
+                return
+            count, completed = self.registry.reset_status_display(alerts)
+            if not count:
+                return
+            self.applied = ""
+            self.done_mode = False
+            # A display reset must not turn into an artificial task completion.
+            self.sound_after = completed
+            self.log(f"状态恢复正常：已清除 {count} 条当前灯光提示，仍在自动跟随新状态")
 
     def snapshot(self):
         value = self.registry.snapshot()

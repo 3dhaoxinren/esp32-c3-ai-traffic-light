@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 指示灯 · 统一版</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/unified.css"><script src="/session.js" defer></script><script src="/app.js" defer></script><script src="/audio.js" defer></script><script src="/discovery.js" defer></script></head>
 <body><div class="app">
-<header class="header"><div class="brand"><span class="brand-icon">AI</span><div><strong>AI指示灯 <span class="version-tag">3.1.3</span></strong><span>Nano / ESP32-C3 统一版</span></div></div><div class="header-actions"><span class="local-label"><i></i>本机运行</span><button class="ghost" id="advanced-at-toggle" aria-expanded="false">高级 AT</button><button class="ghost" id="exit">退出程序</button></div></header>
+<header class="header"><div class="brand"><span class="brand-icon">AI</span><div><strong>AI指示灯 <span class="version-tag">3.1.5</span></strong><span>Nano / ESP32-C3 统一版</span></div></div><div class="header-actions"><span class="local-label"><i></i>本机运行</span><button class="ghost" id="advanced-at-toggle" aria-expanded="false">高级 AT</button><button class="ghost" id="exit">退出程序</button></div></header>
 <div id="demo-banner" class="demo" hidden>演示模式 · 下面的状态是模拟数据，不访问小板。</div>
 <main>
 <section class="overview"><div class="overview-heading"><div><div class="eyebrow">DEVICE OVERVIEW</div><h1>小板状态</h1></div><div class="refresh-actions"><span id="updated-at">尚未读取设备</span><label class="toggle"><input id="auto-refresh" type="checkbox" autocomplete="off">自动检查（15 秒）</label><button id="refresh-status" class="secondary" disabled>刷新状态</button></div></div>
@@ -162,6 +162,6 @@ python .\server.py --signal idle --source Claude --session task-1 --ttl 3600</pr
 <section class="panel status-panel" aria-live="polite"><div class="status-title"><i class="dot" id="status-dot"></i><strong id="stage">未连接</strong><span id="progress-count"></span><button id="stop" class="text-button danger" hidden>停止</button></div><p id="message">选择串口，读取小板当前状态。</p><progress id="progress" max="1" value="0" hidden aria-label="操作进度"></progress><div id="ui-error" class="error" role="alert" hidden></div><p id="status-warnings" class="warning-text" hidden></p></section>
 </div></div>
 <details class="panel log-panel"><summary><span>通信记录 <small>本次会话 · 密码隐藏</small></span><span id="log-count">0 条</span></summary><div class="log-tools"><span>自动状态刷新只记录异常</span><button id="export" class="text-button">导出记录</button></div><div id="logs" class="logs" role="log" aria-live="off"><div class="empty-log">连接后显示命令和回复。</div></div></details>
-</main><footer><span>AI 指示灯 3.1.3</span><span>设备状态来自实际回复 · 未确认的联网状态单独标明</span></footer></div>
+</main><footer><span>AI 指示灯 3.1.5</span><span>设备状态来自实际回复 · 未确认的联网状态单独标明</span></footer></div>
 <dialog id="action-dialog"><form method="dialog"><div class="eyebrow">设备操作</div><h2 id="dialog-title"></h2><p id="dialog-description"></p><div class="form-actions"><button value="cancel" class="secondary">取消</button><button id="dialog-confirm" value="confirm" class="primary">继续</button></div></form></dialog>
 </body></html>

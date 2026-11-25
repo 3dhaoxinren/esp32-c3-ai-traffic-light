@@ -33,7 +33,7 @@ class AppServer(ThreadingHTTPServer):
         if local_only:
             self.controller._set(app_version='2.6.0', message='Nano 本地版：选择 USB 灯板')
         else:
-            self.controller._set(app_version='3.1.3')
+            self.controller._set(app_version='3.1.5')
         self.lights = LightController(self.controller.log, demo=demo, local_only=local_only)
         self.connection_lock = threading.RLock()
         self.ai = AiCoordinator(self.lights, self.connection_lock, self.controller.log, demo=demo, preferences=preferences, local_only=local_only)

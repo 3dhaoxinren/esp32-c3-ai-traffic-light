@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from ai_status import StateRegistry
+from ai_status import StateRegistry, visible_status_alerts
 from core import DeviceError
 
 
@@ -68,6 +68,28 @@ class ErrorAckTests(unittest.TestCase):
     def test_bad_request_has_no_partial_effect(self):
         with self.assertRaises(DeviceError): self.r.acknowledge_errors([self.error,{}])
         self.assertEqual(self.r.snapshot()['state'],'error')
+
+    def test_display_reset_keeps_heartbeat_but_new_occurrence_realerts(self):
+        e = {**self.error,'state':'waiting'}
+        self.r.event(e)
+        alerts = visible_status_alerts(self.r.snapshot())
+        self.assertEqual(self.r.reset_status_display(alerts), (1, 0))
+        self.r.event({**e,'state':'heartbeat'})
+        self.assertEqual(self.r.snapshot()['state'],'idle')
+        self.r.event({**e,'state':'running'})
+        self.r.event(e)
+        self.assertEqual(self.r.reset_status_display(alerts), (0, 0))
+        self.assertEqual(self.r.snapshot()['state'],'waiting')
+
+    def test_display_reset_is_not_persisted_and_does_not_change_link_or_ttl(self):
+        self.r.reset_status_display(visible_status_alerts(self.r.snapshot()))
+        self.assertFalse(self.path.exists())
+        row = self.r.snapshot()['sessions'][0]
+        self.assertEqual(row['state'],'error')
+        self.assertTrue(row['suppressed'])
+        self.assertFalse(row['acknowledged'])
+        self.now += 121
+        self.assertEqual(self.r.snapshot()['state'],'offline')
 
 
 if __name__=='__main__': unittest.main()

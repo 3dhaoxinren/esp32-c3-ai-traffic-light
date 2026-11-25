@@ -465,7 +465,7 @@ function renderAi(s){
   $('ai-link').textContent=l.connected?`灯板已连接 ${l.endpoint}。${l.result==='error'?l.message:'灯板回执：'+(l.reply||'等待回执')}`:'灯板未连接，当前只显示汇总状态。先点击“连接灯板”。';
   $('ai-observer').textContent=a.observer||'尚未开始本地监听';
   document.querySelectorAll('[data-ai-preview]').forEach(b=>{b.disabled=busy||!l.connected||s.demo;b.textContent=aiLabels[b.dataset.aiPreview]+' · '+patternName(patterns[b.dataset.aiPreview]);});
-  const rows=a.sessions||[], key=JSON.stringify(rows.map(r=>[r.source,r.session,r.state,r.stale,r.effective,r.acknowledged,r.event_id]));
+  const rows=a.sessions||[], key=JSON.stringify(rows.map(r=>[r.source,r.session,r.state,r.stale,r.effective,r.acknowledged,r.suppressed,r.event_id]));
   const errors=rows.filter(r=>r.effective==='error'&&!r.stale);
   $('ai-ack-errors').hidden=!errors.length;
   $('ai-ack-errors').disabled=pending||closed;
@@ -476,7 +476,7 @@ function renderAi(s){
     for(const row of rows){const el=document.createElement('div');el.className='ai-session';
       const title=document.createElement('strong');title.textContent=row.source;
       const session=document.createElement('small');session.textContent=row.session;session.title=row.session;
-      const status=document.createElement('span');status.className='ai-session-state state-'+row.effective;status.textContent=row.stale?'已失效':row.acknowledged?'异常已查看':aiLabels[row.effective];
+      const status=document.createElement('span');status.className='ai-session-state state-'+row.effective;status.textContent=row.stale?'已失效':row.acknowledged?'异常已查看':row.suppressed?`灯光已恢复（${aiLabels[row.state]}）`:aiLabels[row.effective];
       el.append(title,session,status);$('ai-sessions').append(el);}
   }
 }
